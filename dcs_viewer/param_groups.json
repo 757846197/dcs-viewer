@@ -1,0 +1,185 @@
+{
+  "groups": [
+    {
+      "id": "east_opener",
+      "name": "东开口机",
+      "name_en": "East Opening Machine",
+      "params": [
+        "LT_LQFC_57", "LT_LQFC_59", "LT_LQFC_60", "LT_LQFC_61", "LT_LQFC_62",
+        "LT_LQFC_63", "LT_LQFC_64", "LT_LQFC_65", "LT_LQFC_66", "LT_LQFC_67",
+        "LT_LQFC_68", "LT_LQFC_69", "LT_LQFC_74", "LT_LQFC_75",
+        "LT_LQFC_85", "LT_LQFC_86", "LT_LQFC_87", "LT_LQFC_88", "LT_LQFC_89"
+      ],
+      "categories": {
+        "remote_command": ["LT_LQFC_57", "LT_LQFC_60", "LT_LQFC_62", "LT_LQFC_69"],
+        "control_valve": ["LT_LQFC_59", "LT_LQFC_61"],
+        "position": ["LT_LQFC_63", "LT_LQFC_65", "LT_LQFC_67"],
+        "pressure": ["LT_LQFC_64", "LT_LQFC_66", "LT_LQFC_68", "LT_LQFC_74", "LT_LQFC_75", "LT_LQFC_85", "LT_LQFC_86", "LT_LQFC_87", "LT_LQFC_88", "LT_LQFC_89"]
+      }
+    },
+    {
+      "id": "west_opener",
+      "name": "西开口机",
+      "name_en": "West Opening Machine",
+      "params": [
+        "LT_LQFC_94", "LT_LQFC_96", "LT_LQFC_97", "LT_LQFC_98", "LT_LQFC_99",
+        "LT_LQFC_100", "LT_LQFC_101", "LT_LQFC_102", "LT_LQFC_103", "LT_LQFC_104",
+        "LT_LQFC_105", "LT_LQFC_106", "LT_LQFC_111", "LT_LQFC_112",
+        "LT_LQFC_122", "LT_LQFC_123", "LT_LQFC_124", "LT_LQFC_125", "LT_LQFC_126"
+      ],
+      "categories": {
+        "remote_command": ["LT_LQFC_94", "LT_LQFC_97", "LT_LQFC_99", "LT_LQFC_106"],
+        "control_valve": ["LT_LQFC_96", "LT_LQFC_98"],
+        "position": ["LT_LQFC_100", "LT_LQFC_102", "LT_LQFC_104"],
+        "pressure": ["LT_LQFC_101", "LT_LQFC_103", "LT_LQFC_105", "LT_LQFC_111", "LT_LQFC_112", "LT_LQFC_122", "LT_LQFC_123", "LT_LQFC_124", "LT_LQFC_125", "LT_LQFC_126"]
+      }
+    },
+    {
+      "id": "east_plugger",
+      "name": "东堵口机",
+      "name_en": "East Plugging Machine",
+      "params": [
+        "LT_LQFC_129", "LT_LQFC_130", "LT_LQFC_131", "LT_LQFC_132", "LT_LQFC_133",
+        "LT_LQFC_134", "LT_LQFC_135", "LT_LQFC_136", "LT_LQFC_137", "LT_LQFC_138",
+        "LT_LQFC_139", "LT_LQFC_140", "LT_LQFC_141", "LT_LQFC_142", "LT_LQFC_143",
+        "LT_LQFC_144", "LT_LQFC_150", "LT_LQFC_151"
+      ],
+      "categories": {
+        "control": ["LT_LQFC_129", "LT_LQFC_130", "LT_LQFC_131", "LT_LQFC_132", "LT_LQFC_133", "LT_LQFC_134"],
+        "position": ["LT_LQFC_135", "LT_LQFC_137", "LT_LQFC_143", "LT_LQFC_144"],
+        "pressure": ["LT_LQFC_136", "LT_LQFC_138", "LT_LQFC_139", "LT_LQFC_140"],
+        "safety": ["LT_LQFC_141", "LT_LQFC_142"],
+        "hydraulic": ["LT_LQFC_150", "LT_LQFC_151"]
+      }
+    },
+    {
+      "id": "west_plugger",
+      "name": "西堵口机",
+      "name_en": "West Plugging Machine",
+      "params": [
+        "LT_LQFC_152", "LT_LQFC_153", "LT_LQFC_154", "LT_LQFC_155", "LT_LQFC_156",
+        "LT_LQFC_157", "LT_LQFC_158", "LT_LQFC_159", "LT_LQFC_160", "LT_LQFC_161",
+        "LT_LQFC_162", "LT_LQFC_163", "LT_LQFC_164", "LT_LQFC_165", "LT_LQFC_166",
+        "LT_LQFC_167", "LT_LQFC_173", "LT_LQFC_174"
+      ],
+      "categories": {
+        "control": ["LT_LQFC_152", "LT_LQFC_153", "LT_LQFC_154", "LT_LQFC_155", "LT_LQFC_156", "LT_LQFC_157"],
+        "position": ["LT_LQFC_158", "LT_LQFC_160", "LT_LQFC_166", "LT_LQFC_167"],
+        "pressure": ["LT_LQFC_159", "LT_LQFC_161", "LT_LQFC_162", "LT_LQFC_163"],
+        "safety": ["LT_LQFC_164", "LT_LQFC_165"],
+        "hydraulic": ["LT_LQFC_173", "LT_LQFC_174"]
+      }
+    }
+  ],
+  "labels": {
+    "LT_LQFC_57": "东开口机开口机选择",
+    "LT_LQFC_59": "东开口机回转进/回转退",
+    "LT_LQFC_60": "东开口机转钎正传/反转",
+    "LT_LQFC_61": "东开口机小车前进/小车后退",
+    "LT_LQFC_62": "东开口机挂钩/脱钩",
+    "LT_LQFC_63": "东开口机回转位置",
+    "LT_LQFC_64": "东开口机回转压力",
+    "LT_LQFC_65": "东开口机挂钩位置",
+    "LT_LQFC_66": "东开口机倾动压力",
+    "LT_LQFC_67": "东开口机推进位置",
+    "LT_LQFC_68": "东开口机推进压力",
+    "LT_LQFC_69": "东开口机冲击开/关",
+    "LT_LQFC_74": "东开口机回转回油",
+    "LT_LQFC_75": "东开口机倾动回油压力",
+    "LT_LQFC_85": "东开口机送给回压力",
+    "LT_LQFC_86": "东开口机转钎回油压力",
+    "LT_LQFC_87": "东开口机转钎压力",
+    "LT_LQFC_88": "东开口机冲击压力",
+    "LT_LQFC_89": "东开口机冲击回压力",
+    "LT_LQFC_94": "西开口机开口机选择",
+    "LT_LQFC_96": "西开口机回转进/回转退",
+    "LT_LQFC_97": "西开口机转钎正传/反转",
+    "LT_LQFC_98": "西开口机小车前进/小车后退",
+    "LT_LQFC_99": "西开口机挂钩/脱钩",
+    "LT_LQFC_100": "西开口机回转位置",
+    "LT_LQFC_101": "西开口机回转压力",
+    "LT_LQFC_102": "西开口机挂钩位置",
+    "LT_LQFC_103": "西开口机倾动压力",
+    "LT_LQFC_104": "西开口机推进位置",
+    "LT_LQFC_105": "西开口机推进压力",
+    "LT_LQFC_106": "西开口机冲击开/关",
+    "LT_LQFC_111": "西开口机回转回油",
+    "LT_LQFC_112": "西开口机倾动回油压力",
+    "LT_LQFC_122": "西开口机送给回压力",
+    "LT_LQFC_123": "西开口机转钎回油压力",
+    "LT_LQFC_124": "西开口机转钎压力",
+    "LT_LQFC_125": "西开口机冲击压力",
+    "LT_LQFC_126": "西开口机冲击回压力",
+    "LT_LQFC_129": "东堵口机遥控电源",
+    "LT_LQFC_130": "东堵口机遥控启动/停止",
+    "LT_LQFC_131": "东堵口机开口机选择",
+    "LT_LQFC_132": "东堵口机泥炮机选择",
+    "LT_LQFC_133": "东堵口机回转进/回转退",
+    "LT_LQFC_134": "东堵口机打泥前进/打泥后退",
+    "LT_LQFC_135": "东堵口机回转位置",
+    "LT_LQFC_136": "东堵口机转炮压力",
+    "LT_LQFC_137": "东堵口机打泥位置",
+    "LT_LQFC_138": "东堵口机打泥压力",
+    "LT_LQFC_139": "东堵口机退泥压力",
+    "LT_LQFC_140": "东堵口机退炮压力",
+    "LT_LQFC_141": "东堵口机SET/备用",
+    "LT_LQFC_142": "东堵口机急停",
+    "LT_LQFC_143": "东堵口机等待位置",
+    "LT_LQFC_144": "东堵口机工作位置",
+    "LT_LQFC_150": "东堵口机液压温度",
+    "LT_LQFC_151": "东堵口机液压压力",
+    "LT_LQFC_152": "西堵口机遥控电源",
+    "LT_LQFC_153": "西堵口机遥控启动/停止",
+    "LT_LQFC_154": "西堵口机开口机选择",
+    "LT_LQFC_155": "西堵口机泥炮机选择",
+    "LT_LQFC_156": "西堵口机回转进/回转退",
+    "LT_LQFC_157": "西堵口机打泥前进/打泥后退",
+    "LT_LQFC_158": "西堵口机回转位置",
+    "LT_LQFC_159": "西堵口机转炮压力",
+    "LT_LQFC_160": "西堵口机打泥位置",
+    "LT_LQFC_161": "西堵口机打泥压力",
+    "LT_LQFC_162": "西堵口机退泥压力",
+    "LT_LQFC_163": "西堵口机退炮压力",
+    "LT_LQFC_164": "西堵口机SET/备用",
+    "LT_LQFC_165": "西堵口机急停",
+    "LT_LQFC_166": "西堵口机等待位置",
+    "LT_LQFC_167": "西堵口机工作位置",
+    "LT_LQFC_173": "西堵口机液压温度",
+    "LT_LQFC_174": "西堵口机液压压力"
+  },
+  "analysis_model": {
+    "description": "高炉炉前开/堵口作业智能化辅助模型 — 基于GBDT-MPC-PID三级协同架构",
+    "dimensions": [
+      {
+        "name": "遥控器指令分析",
+        "indicators": ["选择", "正反转", "挂钩/脱钩", "冲击开/关"],
+        "model_inputs": ["开口机选择", "转钎正传/反转", "挂钩/脱钩", "冲击开/关"],
+        "purpose": "识别操作指令模式，为GBDT提供离散指令特征"
+      },
+      {
+        "name": "控制比例阀分析",
+        "indicators": ["回转进/退", "小车前进/后退"],
+        "model_inputs": ["回转进/回转退", "小车前进/小车后退"],
+        "purpose": "分析比例阀动作时序，为MPC提供执行层参数"
+      },
+      {
+        "name": "压力-位置关联分析",
+        "indicators": ["回转压力/位置", "推进压力/位置", "挂钩位置/倾动压力"],
+        "model_inputs": ["回转位置", "回转压力", "挂钩位置", "倾动压力", "推进位置", "推进压力", "回转回油", "倾动回油压力"],
+        "purpose": "建立力-位移关系模型，检测设备机械状态异常"
+      },
+      {
+        "name": "钻进与冲击系统分析",
+        "indicators": ["冲击压力", "转钎压力", "送进压力", "穿透判定"],
+        "model_inputs": ["送给回压力", "转钎回油压力", "转钎压力", "冲击压力", "冲击回压力"],
+        "purpose": "分析开口钻进过程中的压力特征，用于钻透智能判断"
+      },
+      {
+        "name": "东西侧对比分析",
+        "indicators": ["东西差异度", "利用率对比", "压力曲线一致性"],
+        "data_sources": ["东/西开口机同参数对比"],
+        "purpose": "识别单侧设备老化或异常"
+      }
+    ]
+  }
+}

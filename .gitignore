@@ -1,0 +1,17 @@
+# 敏感配置
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 运行时生成
+DCS_checkpoint.txt
+DCS_export.csv
+dcs_viewer/flask_debug.log
+dcs_viewer/test_export.xlsx
+
+# IDE
+.vscode/
+.idea/
