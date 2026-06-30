@@ -36,6 +36,7 @@ from config import (
     FLASK_HOST, FLASK_PORT, APP_TOKEN,
     MAX_QUERY_HOURS, MAX_WEB_ROWS, MAX_EXCEL_ROWS, EXPORT_CHUNK_HOURS,
     sanitize_param_for_flux, check_config,
+    SETTINGS_PASSWORD, save_runtime_config, get_current_config,
 )
 
 app = Flask(__name__)
@@ -2676,6 +2677,100 @@ def trend():
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+# === 系统配置页面 ===
+SETTINGS_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统配置 — DCS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f7fa;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.06);padding:32px;width:440px;max-width:95vw}
+.card h2{font-size:18px;margin-bottom:20px;color:#1f2937}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:4px}
+.form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none}
+.form-group input:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.btn{width:100%;padding:10px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#1677ff,#0958d9);margin-top:8px}
+.btn:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
+.msg{padding:8px 12px;border-radius:6px;font-size:12px;margin-top:12px;display:none}
+.msg.ok{display:block;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.msg.err{display:block;background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+</style>
+</head>
+<body>
+<div class="card">
+<h2>⚙ 系统配置</h2>
+<form id="settingsForm" onsubmit="saveSettings(event)">
+<div class="form-group"><label>InfluxDB 地址</label><input id="influxUrl" placeholder="http://10.56.128.202:8086"></div>
+<div class="form-group"><label>InfluxDB Token</label><input id="influxToken" type="password" placeholder="输入 Token"></div>
+<div class="form-group"><label>组织 (Org)</label><input id="influxOrg" placeholder="myOrg"></div>
+<div class="form-group"><label>Bucket</label><input id="influxBucket" placeholder="islag"></div>
+<div class="form-group"><label>查询超时 (毫秒)</label><input id="influxTimeout" type="number" placeholder="180000"></div>
+<div class="form-group"><label>Web 访问 Token</label><input id="appToken" placeholder="dcs2026"></div>
+<div class="form-group"><label>设置密码</label><input id="settingsPwd" type="password" placeholder="123456" autocomplete="new-password" style="display:none">
+<input id="settingsPwdConfirm" type="password" placeholder="确认密码" style="display:none"></div>
+<button type="button" class="btn" onclick="showPwd()" id="changePwdBtn">修改密码</button>
+<button type="submit" class="btn">保存配置</button>
+</form>
+<div class="msg" id="msg"></div>
+</div>
+<script>
+fetch('/api/settings/config?token='+'dcs2026').then(r=>r.json()).then(d=>{
+    document.getElementById('influxUrl').value=d.INFLUX_URL||'';
+    document.getElementById('influxOrg').value=d.INFLUX_ORG||'';
+    document.getElementById('influxBucket').value=d.INFLUX_BUCKET||'';
+    document.getElementById('influxTimeout').value=d.INFLUX_TIMEOUT_MS||'';
+    document.getElementById('appToken').value=d.APP_TOKEN.includes('***')?'':d.APP_TOKEN;
+}).catch(()=>{});
+function showPwd(){
+    document.getElementById('settingsPwd').style.display='block';
+    document.getElementById('settingsPwdConfirm').style.display='block';
+    document.getElementById('changePwdBtn').style.display='none';
+}
+function saveSettings(e){
+    e.preventDefault();
+    var p1=document.getElementById('settingsPwd').value.trim();
+    var p2=document.getElementById('settingsPwdConfirm').value.trim();
+    if(p1&&p1!==p2){return msg('两次密码不一致','err')}
+    var data={
+        INFLUX_URL:document.getElementById('influxUrl').value.trim(),
+        INFLUX_TOKEN:document.getElementById('influxToken').value.trim(),
+        INFLUX_ORG:document.getElementById('influxOrg').value.trim(),
+        INFLUX_BUCKET:document.getElementById('influxBucket').value.trim(),
+        INFLUX_TIMEOUT_MS:document.getElementById('influxTimeout').value.trim(),
+        APP_TOKEN:document.getElementById('appToken').value.trim(),
+    };
+    if(p1)data.SETTINGS_PASSWORD=p1;
+    fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(d=>{
+        msg(d.ok?'保存成功，重启后生效':'保存失败: '+d.error, d.ok?'ok':'err');
+    }).catch(e=>msg('请求失败: '+e,'err'));
+}
+function msg(t,c){var m=document.getElementById('msg');m.textContent=t;m.className='msg '+c}
+</script>
+</body>
+</html>"""
+
+@app.route("/settings")
+def settings_page():
+    return render_template_string(SETTINGS_HTML)
+
+@app.route("/api/settings/config")
+def api_get_config():
+    return jsonify(get_current_config())
+
+@app.route("/api/settings/save", methods=["POST"])
+def api_save_config():
+    data = request.get_json(silent=True) or {}
+    # 密码保护: 如果提供了新密码则用新密码，否则用当前密码
+    pwd = data.get("SETTINGS_PASSWORD", "")
+    save_runtime_config(data)
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
