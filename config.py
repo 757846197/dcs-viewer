@@ -13,13 +13,18 @@ DCS 数据平台 — 集中配置模块
     APP_TOKEN       — Web 应用访问 Token（必填，用于 Flask API 认证）
 """
 import os
+import sys
 import re
 from pathlib import Path
 
-# 自动加载项目根目录的 .env 文件
+# 自动加载 .env 文件
+# PyInstaller 打包时 exe 目录优先，开发时项目根目录
 try:
     from dotenv import load_dotenv
-    _ENV_FILE = Path(__file__).resolve().parent / ".env"
+    if getattr(sys, 'frozen', False):
+        _ENV_FILE = Path(sys.executable).parent / ".env"
+    else:
+        _ENV_FILE = Path(__file__).resolve().parent / ".env"
     if _ENV_FILE.exists():
         load_dotenv(_ENV_FILE)
 except ImportError:

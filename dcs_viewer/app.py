@@ -12,13 +12,21 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# PyInstaller 打包兼容: 定位资源文件路径
+if getattr(sys, 'frozen', False):
+    _BASE_DIR = Path(sys._MEIPASS)
+    _EXE_DIR = Path(sys.executable).parent
+else:
+    _BASE_DIR = Path(__file__).resolve().parent
+    _EXE_DIR = _BASE_DIR.parent
+
 from flask import Flask, request, jsonify, send_file, render_template_string, make_response
 from flask_compress import Compress
 from influxdb_client import InfluxDBClient
 import xlsxwriter
 
 # 项目根目录加入搜索路径，以便导入 config
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = _EXE_DIR
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
@@ -57,7 +65,9 @@ def _check_api_auth():
     return None
 
 # === 加载参数分组 ===
-GROUPS_FILE = os.path.join(os.path.dirname(__file__), "param_groups.json")
+GROUPS_FILE = _BASE_DIR / "param_groups.json"
+if not GROUPS_FILE.exists():
+    GROUPS_FILE = _EXE_DIR / "param_groups.json"
 with open(GROUPS_FILE, "r", encoding="utf-8") as f:
     PARAM_CONFIG = json.load(f)
 
