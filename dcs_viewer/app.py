@@ -1940,21 +1940,14 @@ function tooltipPlugin() {
                     const vRaw = (_rawValues[i-1] && _rawValues[i-1][idx] !== undefined) ? _rawValues[i-1][idx] : null;
                     const s = u.series[i];
                     const clr = (typeof s.stroke === 'function') ? '#1677ff' : (s.stroke || '#999');
-                    let valHtml;
-                    if (vRaw == null) {
-                        valHtml = '<span style="color:#64748b;">--</span>';
-                    } else {
-                        const v2 = Number(vRaw).toFixed(2);
-                        // 根据数值大小使用不同颜色层次
-                        let vColor = '#e2e8f0';
-                        if (Math.abs(vRaw) >= 1000) vColor = '#fbbf24';
-                        else if (Math.abs(vRaw) >= 100) vColor = '#a78bfa';
-                        else if (Math.abs(vRaw) >= 10) vColor = '#60a5fa';
-                        valHtml = '<span style="font-weight:700;color:' + vColor + ';font-variant-numeric:tabular-nums;">' + v2 + '</span>';
-                    }
+                    // 数值统一跟随曲线颜色，更直观对应
+                    const valHtml = (vRaw == null)
+                        ? '<span style="color:#64748b;">--</span>'
+                        : '<span style="font-weight:700;color:' + clr + ';font-variant-numeric:tabular-nums;text-shadow:0 0 8px ' + clr + '55;">' + Number(vRaw).toFixed(2) + '</span>';
                     html += '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px;' +
-                        'border-left:3px solid ' + clr + ';border-radius:0 6px 6px 0;' +
-                        'background:rgba(255,255,255,0.04);white-space:nowrap;">' +
+                        'border-left:5px solid ' + clr + ';border-radius:0 6px 6px 0;' +
+                        'background:linear-gradient(90deg,' + clr + '15 0%,rgba(255,255,255,0.04) 100%);' +
+                        'white-space:nowrap;">' +
                         '<span style="flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1;font-size:11px;">' +
                         (s.label || '') + '</span>' +
                         valHtml + '</div>';
