@@ -2251,9 +2251,9 @@ function buildLegend(data) {
         legendDiv = document.createElement('div');
         legendDiv.id = 'chart-legend';
         legendDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;' +
-            'border-top:1px solid #f1f5f9;max-height:60px;overflow-y:auto;';
+            'border-bottom:1px solid #f1f5f9;max-height:60px;overflow-y:auto;';
         const chartWrap = document.getElementById('chartArea').parentElement;
-        chartWrap.appendChild(legendDiv);
+        chartWrap.insertBefore(legendDiv, chartWrap.firstChild);
     }
     let html = '';
     data.series.forEach((s, i) => {
