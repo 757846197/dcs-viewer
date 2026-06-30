@@ -1954,7 +1954,7 @@ function tooltipPlugin() {
                     const valHtml = (vRaw == null)
                         ? '<span style="color:#64748b;">--</span>'
                         : '<span style="font-weight:700;color:' + clr + ';font-variant-numeric:tabular-nums;text-shadow:0 0 8px ' + clr + '66;">' + Number(vRaw).toFixed(2) + '</span>';
-                    html += '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px 4px 12px;' +
+                    html += '<div data-tip-row="' + (i-1) + '" style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px 4px 12px;' +
                         'border-left:5px solid ' + clr + ';border-radius:0 6px 6px 0;' +
                         'background:linear-gradient(90deg,' + clr + '22 0%,rgba(255,255,255,0.04) 100%);' +
                         'white-space:nowrap;">' +
@@ -1963,6 +1963,8 @@ function tooltipPlugin() {
                         valHtml + '</div>';
                 }
                 tip.innerHTML = html;
+                // 缓存行引用供 toggleSeriesVis 同步
+                window._tipRows = tip.querySelectorAll('[data-tip-row]');
             }
         }
     };
@@ -2297,6 +2299,12 @@ function toggleSeriesVis(idx, el) {
     uplot.setSeries(idx, { show: !visible }, false);
     uplot.redraw();
     el.style.opacity = visible ? '0.35' : '1';
+    el.dataset.hidden = visible ? '1' : '0';
+    // 同步隐藏 tooltip 中对应的行
+    if (window._tipRows) {
+        const row = window._tipRows[idx - 1];  // idx 1-based
+        if (row) row.style.display = visible ? 'none' : 'flex';
+    }
 }
 
 // === 保存图片 ===
