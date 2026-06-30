@@ -1890,20 +1890,21 @@ function buildUplotData(apiData) {
     return cols;
 }
 
-// === 自定义 Tooltip 插件 ===
+// === 自定义 Tooltip 插件（固定页面右侧） ===
 function tooltipPlugin() {
     let over;
     const tip = document.createElement('div');
     tip.id = 'uplot-tooltip';
     tip.style.cssText = [
-        'display:none;position:absolute;z-index:100;pointer-events:none;',
+        'display:none;position:fixed;z-index:100;pointer-events:none;',
+        'top:50%;right:24px;transform:translateY(-50%);',
         'background:rgba(15,23,42,0.95);color:#f1f5f9;',
-        'padding:10px 14px;border-radius:8px;',
+        'padding:12px 16px;border-radius:8px;',
         'font-size:12px;line-height:1.6;',
         'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;',
         'box-shadow:0 4px 16px rgba(0,0,0,0.2);',
         'border:1px solid #334155;',
-        'max-width:300px;'
+        'min-width:220px;max-width:280px;'
     ].join('');
     return {
         hooks: {
@@ -1911,10 +1912,6 @@ function tooltipPlugin() {
                 over = u.over;
                 const wrap = over.parentElement;
                 wrap.appendChild(tip);
-                // 实时记录鼠标坐标
-                over.addEventListener('mousemove', (e) => {
-                    tip._mx = e.clientX; tip._my = e.clientY;
-                });
                 over.addEventListener('mouseenter', () => { tip.style.display = 'block'; });
                 over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
             },
@@ -1927,25 +1924,18 @@ function tooltipPlugin() {
                 const pad = n => String(n).padStart(2, '0');
                 const timeStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
                     ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-                let html = '<div style="font-weight:600;margin-bottom:6px;color:#93c5fd;font-size:11px;">' + timeStr + '</div>';
+                let html = '<div style="font-weight:600;margin-bottom:8px;color:#93c5fd;font-size:11px;border-bottom:1px solid #334155;padding-bottom:6px;">' + timeStr + '</div>';
                 for (let i = 1; i < u.data.length; i++) {
                     const v = u.data[i][idx];
                     const s = u.series[i];
-                    const valStr = v == null ? '--' : Number(v).toFixed(4);
-                    html += '<div style="display:flex;align-items:center;gap:6px;margin:2px 0;white-space:nowrap;">' +
-                        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' + 
+                    const valStr = v == null ? '--' : Number(v).toFixed(2);
+                    html += '<div style="display:flex;align-items:center;gap:6px;margin:3px 0;white-space:nowrap;">' +
+                        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' +
                         (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999')) + ';"></span>' +
                         '<span style="flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;">' + (s.label || '') + '</span>' +
                         '<span style="font-weight:700;font-variant-numeric:tabular-nums;margin-left:8px;">' + valStr + '</span></div>';
                 }
                 tip.innerHTML = html;
-                // 浮窗放在鼠标右侧，稍偏上
-                let x = (tip._mx || 0) + 16;
-                let y = (tip._my || 0) - 20;
-                if (x + 280 > window.innerWidth) x = (tip._mx || 0) - 290;
-                if (y < 4) y = 4;
-                tip.style.left = x + 'px';
-                tip.style.top = y + 'px';
             }
         }
     };
