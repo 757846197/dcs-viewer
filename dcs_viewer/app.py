@@ -1760,9 +1760,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .toolbar input[type=datetime-local] { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; }
 .toolbar input[type=datetime-local]:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
 /* 事件选择器与左侧参数树风格统一 */
-.event-select-wrap select { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; min-width: 180px; }
+.event-select-wrap select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; min-width: 200px; height: 38px; }
 .event-select-wrap select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
 .event-select-wrap .label { display: block; font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 2px; }
+.event-select-wrap .btn { height: 38px; padding: 0 16px; font-size: 13px; }
 .btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; white-space: nowrap; }
 .btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
 .btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); }
@@ -1844,7 +1845,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
                 <select id="eventSelect" onchange="onEventSelect()">
                     <option value="">-- 选择开口事件 --</option>
                 </select>
-                <button class="btn btn-outline btn-sm" onclick="fetchEvents()" title="检测开口事件">🔍</button>
+                <button class="btn btn-outline" onclick="fetchEvents()" title="检测开口事件">🔍</button>
             </div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="clearAll()" style="margin-left:auto;">清空所有变量</button>
