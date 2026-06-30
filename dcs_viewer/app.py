@@ -12,7 +12,7 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify, send_file, render_template_string, make_response
 from flask_compress import Compress
 from influxdb_client import InfluxDBClient
 import xlsxwriter
@@ -1542,7 +1542,7 @@ function doFetch() {
     }
 
     fetch(url)
-        .then(r => r.json())
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
             document.getElementById('loadingBar').classList.add('hide');
             if (data.error) {
@@ -1671,8 +1671,11 @@ TREND_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>趋势分析 — DCS</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
@@ -1743,7 +1746,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 
 /* 图表区 */
 .chart-wrap { flex: 1; margin: 16px 24px 24px; background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); display: flex; flex-direction: column; min-height: 500px; position: relative; }
-.chart-area { flex: 1; }
+.chart-area { flex: 1; position: relative; }
 .loading-overlay { display: none; position: absolute; inset: 0; background: rgba(255,255,255,0.7); justify-content: center; align-items: center; z-index: 10; }
 .loading-overlay.show { display: flex; }
 .spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -1791,6 +1794,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
             <input type="datetime-local" id="endTime">
         </div>
         <button class="btn btn-primary" onclick="doQuery()">查询</button>
+        <div class="event-box" style="display:flex;align-items:center;gap:6px;margin-left:12px;">
+            <select id="eventSelect" onchange="onEventSelect()" style="font-size:12px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;max-width:200px;">
+                <option value="">-- 选择开口事件 --</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="fetchEvents()" title="检测开口事件">🔍</button>
+        </div>
         <button class="btn btn-outline btn-sm" onclick="clearAll()" style="margin-left:auto;">清空所有变量</button>
     </div>
 
@@ -1815,7 +1824,93 @@ const LABELS = {{ labels_json | safe }};
 const API_TOKEN = "{{ app_token }}";
 const COLORS = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#2f54eb','#a0d911','#f5222d','#1890ff','#fa541c','#9254de','#597ef7'];
 let selectedParams = [];
-let chart = null;
+let uplot = null;
+
+// === 销毁图表 ===
+function destroyChart() {
+    if (uplot) { uplot.destroy(); uplot = null; }
+    const tip = document.getElementById('uplot-tooltip');
+    if (tip) tip.remove();
+    const legend = document.getElementById('chart-legend');
+    if (legend) legend.innerHTML = '';
+    const indicator = document.getElementById('zoomIndicator');
+    if (indicator) indicator.remove();
+}
+
+// === 数据转换: API格式 → uPlot列格式 ===
+function buildUplotData(apiData) {
+    const first = apiData.series.find(s => s.data.length > 0);
+    if (!first) return null;
+    const timestamps = first.data.map(d => new Date(d.time).getTime() / 1000);
+    const cols = [timestamps];
+    apiData.series.forEach(s => {
+        const map = {};
+        s.data.forEach(d => { map[new Date(d.time).getTime() / 1000] = d.value; });
+        cols.push(timestamps.map(t => (map[t] !== undefined) ? map[t] : null));
+    });
+    return cols;
+}
+
+// === 自定义 Tooltip 插件 ===
+function tooltipPlugin() {
+    let over;
+    const tip = document.createElement('div');
+    tip.id = 'uplot-tooltip';
+    tip.style.cssText = [
+        'display:none;position:absolute;z-index:100;pointer-events:none;',
+        'background:rgba(15,23,42,0.95);color:#f1f5f9;',
+        'padding:10px 14px;border-radius:8px;',
+        'font-size:12px;line-height:1.6;',
+        'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.2);',
+        'border:1px solid #334155;',
+        'max-width:300px;'
+    ].join('');
+    return {
+        hooks: {
+            init: (u) => {
+                over = u.over;
+                const wrap = over.parentElement;
+                wrap.appendChild(tip);
+                // 实时记录鼠标坐标
+                over.addEventListener('mousemove', (e) => {
+                    tip._mx = e.clientX; tip._my = e.clientY;
+                });
+                over.addEventListener('mouseenter', () => { tip.style.display = 'block'; });
+                over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+            },
+            setCursor: (u) => {
+                const { idx } = u.cursor;
+                if (idx == null) { tip.style.display = 'none'; return; }
+                tip.style.display = 'block';
+                const t = u.data[0][idx];
+                const d = new Date(t * 1000);
+                const pad = n => String(n).padStart(2, '0');
+                const timeStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+                    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+                let html = '<div style="font-weight:600;margin-bottom:6px;color:#93c5fd;font-size:11px;">' + timeStr + '</div>';
+                for (let i = 1; i < u.data.length; i++) {
+                    const v = u.data[i][idx];
+                    const s = u.series[i];
+                    const valStr = v == null ? '--' : Number(v).toFixed(4);
+                    html += '<div style="display:flex;align-items:center;gap:6px;margin:2px 0;white-space:nowrap;">' +
+                        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' + 
+                        (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999')) + ';"></span>' +
+                        '<span style="flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;">' + (s.label || '') + '</span>' +
+                        '<span style="font-weight:700;font-variant-numeric:tabular-nums;margin-left:8px;">' + valStr + '</span></div>';
+                }
+                tip.innerHTML = html;
+                // 浮窗放在鼠标右侧，稍偏上
+                let x = (tip._mx || 0) + 16;
+                let y = (tip._my || 0) - 20;
+                if (x + 280 > window.innerWidth) x = (tip._mx || 0) - 290;
+                if (y < 4) y = 4;
+                tip.style.left = x + 'px';
+                tip.style.top = y + 'px';
+            }
+        }
+    };
+}
 
 // === 初始化时间 ===
 function initTime() {
@@ -1901,7 +1996,7 @@ function clearAll() {
     });
     document.getElementById('sidebarFooter').textContent = '已选 0 个变量';
     renderConfig();
-    if (chart) chart.clear();
+    destroyChart();
 }
 
 // === 渲染配置面板 ===
@@ -1948,7 +2043,7 @@ function removeParam(idx) {
     }
     document.getElementById('sidebarFooter').textContent = '已选 ' + selectedParams.length + ' 个变量';
     renderConfig();
-    if (selectedParams.length === 0 && chart) chart.clear();
+    if (selectedParams.length === 0) destroyChart();
 }
 
 // === 查询 ===
@@ -1965,7 +2060,7 @@ function doQuery() {
                 '&token=' + API_TOKEN;
 
     fetch(url)
-        .then(r => r.json())
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
             if (data.error) { alert(data.error); return; }
             renderChart(data);
@@ -1973,242 +2068,298 @@ function doQuery() {
         .catch(e => alert('请求失败: ' + e));
 }
 
-// === 渲染 ECharts ===
+// === 渲染 uPlot 图表 ===
 function renderChart(data) {
-    if (!chart) {
-        chart = echarts.init(document.getElementById('chartArea'));
-        window.addEventListener('resize', () => chart.resize());
+    destroyChart();
 
-        // 监听 dataZoom 事件 → 更新缩放指示器
-        chart.on('dataZoom', function(params) {
-            updateZoomIndicator();
-        });
-    }
+    const cols = buildUplotData(data);
+    if (!cols) return;
 
-    // 收集所有 Y 轴配置
-    let yAxes = [];
+    // 收集已使用的 Y 轴
     let usedAxes = new Set();
     selectedParams.forEach(s => usedAxes.add(s.yAxisIndex));
+    let sortedAxes = [...usedAxes].sort((a,b) => a-b);
 
-    let yAxisNames = [];
-    usedAxes.forEach(idx => {
-        let pos = (idx % 2 === 0) ? 'left' : 'right';
-        let offset = Math.floor(idx / 2) * 60;
-        let axisCfg = {
-            type: 'value',
-            position: pos,
-            offset: offset,
-            nameTextStyle: { fontSize: 10, color: '#94a3b8' },
-            axisLine: { show: true, lineStyle: { color: '#cbd5e1' } },
-            axisLabel: { fontSize: 10, color: '#94a3b8' },
-            splitLine: { show: idx === 0, lineStyle: { color: '#f1f5f9', type: 'dashed' } }
-        };
-        yAxes.push(axisCfg);
-        yAxisNames.push('Y' + (idx + 1));
+    // 映射 yAxisIndex → scale key
+    let axisToScale = {};
+    sortedAxes.forEach((id, i) => { axisToScale[id] = 'y' + i; });
+
+    // 构建 scales
+    let scales = { x: { time: true } };
+    sortedAxes.forEach((id, i) => {
+        let range = undefined;
+        selectedParams.filter(s => s.yAxisIndex === id).forEach(s => {
+            if (s.yMin !== '' && s.yMax !== '') {
+                let r = [parseFloat(s.yMin), parseFloat(s.yMax)];
+                if (!range) range = r;
+                else { range[0] = Math.min(range[0], r[0]); range[1] = Math.max(range[1], r[1]); }
+            }
+        });
+        scales['y' + i] = { auto: !range };
+        if (range) scales['y' + i].range = (u, min, max) => range;
     });
 
-    // 轴索引映射
-    let axisMap = {};
-    let axisIdx = 0;
-    [...usedAxes].sort((a,b)=>a-b).forEach(id => { axisMap[id] = axisIdx++; });
-
-    let series = [];
+    // 构建 series
+    let series = [{}];
     data.series.forEach(s => {
         let cfg = selectedParams.find(x => x.param === s.param);
         if (!cfg) return;
-        let yIdx = axisMap[cfg.yAxisIndex];
-
-        let yMin = cfg.yMin !== '' ? parseFloat(cfg.yMin) : undefined;
-        let yMax = cfg.yMax !== '' ? parseFloat(cfg.yMax) : undefined;
-        if (yMin !== undefined || yMax !== undefined) {
-            yAxes[yIdx].min = yMin;
-            yAxes[yIdx].max = yMax;
-        }
-
         series.push({
-            name: cfg.label,
-            type: 'line',
-            yAxisIndex: yIdx,
-            smooth: true,
-            symbol: 'none',
-            lineStyle: { color: cfg.color, width: 1.5 },
-            emphasis: { focus: 'series', lineStyle: { width: 2.5 } },
-            data: s.data.map(p => [p.time, p.value])
+            label: cfg.label,
+            stroke: cfg.color,
+            width: 2,
+            scale: axisToScale[cfg.yAxisIndex],
+            spanGaps: false,
+            value: (u, v) => v == null ? '--' : Number(v).toFixed(4),
         });
     });
 
-    // 给 Y 轴命名
-    yAxes.forEach((a, i) => { if (!a.name) a.name = yAxisNames[i] || ''; });
-
-    chart.setOption({
-        animation: true,
-        animationDuration: 400,
-        animationEasing: 'cubicInOut',
-
-        // === 增强 Tooltip ===
-        tooltip: {
-            trigger: 'axis',
-            backgroundColor: 'rgba(15,23,42,0.94)',
-            borderColor: '#334155',
-            borderWidth: 1,
-            borderRadius: 10,
-            padding: [12, 16],
-            textStyle: { color: '#f1f5f9', fontSize: 12, fontFamily: '-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif' },
-            axisPointer: {
-                type: 'cross',
-                crossStyle: { color: '#94a3b8', width: 1, type: 'dashed' },
-                label: { backgroundColor: '#1677ff', color: '#fff', fontWeight: 600, fontSize: 11, borderRadius: 4 }
+    // 构建 axes: 每个 Y 轴独立配色 + 标签
+    let axes = [{
+        stroke: '#cbd5e1',
+        grid: { stroke: '#e2e8f0', width: 1 },
+        font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
+    }];
+    sortedAxes.forEach((id, i) => {
+        let isLeft = id % 2 === 0;
+        let extraSpace = Math.floor(id / 2) * 55;
+        // 该轴上的曲线
+        let axisCurves = selectedParams.filter(s => s.yAxisIndex === id);
+        // 轴标签: 单曲线用全称, 多曲线记数
+        let axisLabel = '';
+        let axisColor = '#94a3b8';
+        if (axisCurves.length === 1) {
+            axisLabel = axisCurves[0].label;
+            axisColor = axisCurves[0].color;
+        } else if (axisCurves.length > 1) {
+            axisLabel = axisCurves.length + ' 条曲线';
+            axisColor = '#64748b';
+        }
+        axes.push({
+            scale: 'y' + i,
+            side: isLeft ? 3 : 1,
+            size: 62 + extraSpace,
+            stroke: axisColor,
+            font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
+            label: axisLabel,
+            labelFont: `bold 10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif`,
+            labelGap: 4,
+            grid: {
+                show: i === 0,
+                stroke: '#f1f5f9',
+                width: 1,
+                dash: [4, 4]
             },
-            extraCssText: 'box-shadow: 0 4px 16px rgba(0,0,0,0.15);',
-            formatter: function(ps) {
-                if (!ps || !ps.length) return '';
-                let h = '<div style="font-weight:600;margin-bottom:6px;color:#93c5fd;">' +
-                        ps[0].axisValueLabel + '</div>';
-                ps.forEach(p => {
-                    let v = (p.value[1] != null) ? Number(p.value[1]).toFixed(4) : '--';
-                    h += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;">' +
-                         '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
-                         p.color + ';flex-shrink:0;"></span>' +
-                         '<span style="flex:1;">' + p.seriesName + '</span>' +
-                         '<span style="font-weight:700;font-variant-numeric:tabular-nums;">' + v + '</span>' +
-                         '</div>';
-                });
-                return h;
-            }
+            values: (u, vals) => vals.map(v => {
+                if (v == null) return '';
+                if (Math.abs(v) >= 10000) return (v/1000).toFixed(1) + 'k';
+                if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(1);
+                if (Number.isInteger(v) && Math.abs(v) < 1000) return v.toString();
+                return v.toFixed(2);
+            }),
+        });
+    });
+
+    // 创建 uPlot
+    const container = document.getElementById('chartArea');
+    const opts = {
+        width: Math.max(container.clientWidth - 4, 400),
+        height: Math.max(container.clientHeight - 4, 300),
+        cursor: {
+            show: true,
+            x: true,
+            y: true,
+            drag: { x: true, y: false, setScale: true },
+            focus: { prox: 10 },
+            points: { show: false },
         },
-
-        // === 工具栏：框选缩放 / 还原 / 保存 ===
-        toolbox: {
-            feature: {
-                dataZoom: {
-                    yAxisIndex: 'none',
-                    title: { zoom: '框选放大', back: '撤销缩放' },
-                    iconStyle: { borderColor: '#64748b' },
-                    emphasis: { iconStyle: { borderColor: '#1677ff' } }
-                },
-                restore: {
-                    title: '重置视图',
-                    iconStyle: { borderColor: '#64748b' },
-                    emphasis: { iconStyle: { borderColor: '#1677ff' } }
-                },
-                saveAsImage: {
-                    title: '保存图片',
-                    pixelRatio: 2,
-                    backgroundColor: '#fff',
-                    iconStyle: { borderColor: '#64748b' },
-                    emphasis: { iconStyle: { borderColor: '#1677ff' } }
-                }
-            },
-            right: 16,
-            top: -2,
-            itemSize: 16,
-            itemGap: 8
-        },
-
-        // === 图例 ===
-        legend: {
-            type: 'scroll',
-            bottom: 52,
-            textStyle: { fontSize: 11, color: '#64748b' },
-            pageIconColor: '#1677ff',
-            pageIconInactiveColor: '#cbd5e1',
-            pageTextStyle: { color: '#64748b' }
-        },
-
-        grid: { left: 70, right: 70, top: 30, bottom: 80 },
-
-        xAxis: {
-            type: 'time',
-            axisLine: { lineStyle: { color: '#e2e8f0' } },
-            axisLabel: { fontSize: 10, color: '#94a3b8' },
-            axisTick: { alignWithLabel: true }
-        },
-
-        yAxis: yAxes,
-
+        legend: { show: false },
+        plugins: [tooltipPlugin()],
+        scales: scales,
+        axes: axes,
         series: series,
+    };
 
-        // === 缩放控制 ===
-        dataZoom: [
-            // X轴：鼠标滚轮缩放 + 拖拽平移
-            {
-                type: 'inside',
-                xAxisIndex: 0,
-                zoomOnMouseWheel: true,
-                moveOnMouseMove: true,
-                moveOnMouseWheel: false,
-                zoomLock: false
-            },
-            // X轴：底部滑块
-            {
-                type: 'slider',
-                xAxisIndex: 0,
-                bottom: 80,
-                height: 26,
-                borderRadius: 6,
-                borderColor: '#e2e8f0',
-                backgroundColor: '#f8fafc',
-                fillerColor: 'rgba(22,119,255,0.08)',
-                dataBackground: {
-                    lineStyle: { color: '#1677ff', width: 0.5 },
-                    areaStyle: { color: 'rgba(22,119,255,0.06)' }
-                },
-                selectedDataBackground: {
-                    lineStyle: { color: '#1677ff', width: 1 },
-                    areaStyle: { color: 'rgba(22,119,255,0.12)' }
-                },
-                handleStyle: { color: '#fff', borderColor: '#1677ff', borderWidth: 1.5, size: '90%' },
-                moveHandleStyle: { color: '#1677ff' },
-                textStyle: { fontSize: 10, color: '#94a3b8' },
-                labelFormatter: function(value) {
-                    if (!value) return '';
-                    var d = new Date(value);
-                    var M = (d.getMonth()+1).toString().padStart(2,'0');
-                    var D = d.getDate().toString().padStart(2,'0');
-                    var h = d.getHours().toString().padStart(2,'0');
-                    var m = d.getMinutes().toString().padStart(2,'0');
-                    return M+'/'+D+' '+h+':'+m;
-                }
-            },
-            // Y轴：Shift+滚轮缩放
-            {
-                type: 'inside',
-                yAxisIndex: Array.from({length: yAxes.length}, (_,i) => i),
-                zoomOnMouseWheel: true,
-                moveOnMouseMove: false,
-                zoomLock: false
-            }
-        ],
+    uplot = new uPlot(opts, cols, container);
 
-        color: COLORS
-    }, true);
+    // 缩放级别指示器
+    setupZoomIndicator();
 
-    chart.resize();
+    // 自定义图例
+    buildLegend(data);
+
+    // 响应式
+    window.addEventListener('resize', () => {
+        if (uplot) {
+            const c = document.getElementById('chartArea');
+            uplot.setSize({
+                width: Math.max(c.clientWidth - 4, 400),
+                height: Math.max(c.clientHeight - 4, 300)
+            });
+        }
+    });
+}
+
+
+// === 自定义图例 ===
+function buildLegend(data) {
+    let legendDiv = document.getElementById('chart-legend');
+    if (!legendDiv) {
+        legendDiv = document.createElement('div');
+        legendDiv.id = 'chart-legend';
+        legendDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;' +
+            'border-top:1px solid #f1f5f9;max-height:60px;overflow-y:auto;';
+        const chartWrap = document.getElementById('chartArea').parentElement;
+        chartWrap.appendChild(legendDiv);
+    }
+    let html = '';
+    data.series.forEach((s, i) => {
+        let cfg = selectedParams.find(x => x.param === s.param);
+        if (!cfg) return;
+        html += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;' +
+            'color:#475569;cursor:pointer;user-select:none;padding:2px 0;" ' +
+            'onclick="toggleSeriesVis(' + (i+1) + ', this)">' +
+            '<span style="width:10px;height:2px;background:' + cfg.color + ';flex-shrink:0;"></span>' +
+            s.label + '</label>';
+    });
+    legendDiv.innerHTML = html;
+}
+
+// === 图例切换可见性 ===
+function toggleSeriesVis(idx, el) {
+    if (!uplot) return;
+    const s = uplot.series[idx];
+    const visible = s.show !== false;
+    uplot.setSeries(idx, { show: !visible }, false);
+    uplot.redraw();
+    el.style.opacity = visible ? '0.35' : '1';
+}
+
+// === 保存图片 ===
+function saveChartImage() {
+    if (!uplot) return;
+    const canvas = uplot.ctx.canvas;
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width;
+    exportCanvas.height = canvas.height;
+    const ctx = exportCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(canvas, 0, 0);
+    const link = document.createElement('a');
+    link.download = 'DCS趋势_' + new Date().toISOString().slice(0,10) + '.png';
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+}
+
+// === 重置缩放 ===
+function resetZoom() {
+    if (!uplot || !uplot.data[0] || uplot.data[0].length < 2) return;
+    const xMin = uplot.data[0][0];
+    const xMax = uplot.data[0][uplot.data[0].length - 1];
+    uplot.setScale('x', { min: xMin, max: xMax });
+    if (uplot.scales) {
+        Object.keys(uplot.scales).forEach(k => {
+            if (k !== 'x') uplot.setScale(k, { min: null, max: null });
+        });
+    }
 }
 
 // === 缩放级别指示器 ===
-function updateZoomIndicator() {
-    var opts = chart.getOption();
-    if (!opts || !opts.dataZoom) return;
-    var dz = opts.dataZoom.find(function(d) { return d.type === 'slider'; });
-    if (!dz) return;
-    var pct = ((dz.end || 100) - (dz.start || 0));
-    var level = pct >= 90 ? '' : pct >= 50 ? ' (宽)' : pct >= 20 ? ' (中)' : ' (细)';
-    var el = document.getElementById('zoomIndicator');
+function setupZoomIndicator() {
+    if (!uplot) return;
+    let el = document.getElementById('zoomIndicator');
     if (!el) {
         el = document.createElement('div');
         el.id = 'zoomIndicator';
-        el.style.cssText = 'position:absolute;top:8px;right:140px;font-size:11px;color:#94a3b8;' +
+        el.style.cssText = 'position:absolute;top:8px;right:120px;font-size:11px;color:#94a3b8;' +
             'background:rgba(255,255,255,0.85);padding:2px 10px;border-radius:4px;pointer-events:none;z-index:10;';
         document.getElementById('chartArea').appendChild(el);
     }
-    el.textContent = '范围: ' + Math.round(pct) + '%' + level;
+    const updateIndicator = () => {
+        if (!uplot || !uplot.scales.x) return;
+        const sc = uplot.scales.x;
+        const total = sc.max - sc.min;
+        if (total <= 0) { el.textContent = ''; return; }
+        const visible = (uplot.scales.x.max || 0) - (uplot.scales.x.min || 0);
+        const pct = (visible / total) * 100;
+        const level = pct >= 90 ? '' : pct >= 40 ? ' 宽' : pct >= 15 ? ' 中' : ' 细';
+        el.textContent = '范围: ' + Math.round(pct) + '%' + level;
+    };
+    if (!uplot.hooks.setScale) uplot.hooks.setScale = [];
+    uplot.hooks.setScale.push((u, key) => { if (key === 'x') updateIndicator(); });
+    updateIndicator();
+}
+
+// === 添加工具栏按钮（截图/重置） ===
+function addToolbarButtons() {
+    const toolbar = document.querySelector('.toolbar');
+    if (!toolbar || document.getElementById('btnSaveImg')) return;
+    const btnGroup = document.createElement('div');
+    btnGroup.style.cssText = 'margin-left:auto;display:flex;gap:6px;';
+    btnGroup.innerHTML =
+        '<button class="btn btn-outline btn-sm" id="btnReset" onclick="resetZoom()" title="重置缩放">↺ 重置</button>' +
+        '<button class="btn btn-outline btn-sm" id="btnSaveImg" onclick="saveChartImage()" title="保存图片">📷 截图</button>';
+    toolbar.appendChild(btnGroup);
+}
+
+// === 回转到位事件检测 ===
+let currentEvents = [];
+
+function fetchEvents() {
+    const start = document.getElementById('startTime').value;
+    const end = document.getElementById('endTime').value;
+    if (!start || !end) { alert('请先设置时间范围'); return; }
+
+    const url = '/api/trend/events?start=' + encodeURIComponent(start) +
+                '&end=' + encodeURIComponent(end) +
+                '&token=' + API_TOKEN;
+
+    const sel = document.getElementById('eventSelect');
+    sel.innerHTML = '<option value="">检测中...</option>';
+
+    fetch(url)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            currentEvents = data.events;
+            sel.innerHTML = '<option value="">-- 选择开口事件 --</option>';
+            data.events.forEach((ev, i) => {
+                const d = new Date(ev.trigger_time);
+                const pad = n => String(n).padStart(2,'0');
+                const ts = pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+
+                           pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+                sel.innerHTML += '<option value="' + i + '">' +
+                    ev.machine + ' 遥控开口 @ ' + ts + '</option>';
+            });
+            if (data.events.length === 0) {
+                sel.innerHTML = '<option value="">未检测到开口事件</option>';
+                alert('该时间范围内未检测到开口事件');
+            }
+        })
+        .catch(e => alert('事件检测失败: ' + e));
+}
+
+function onEventSelect() {
+    const idx = document.getElementById('eventSelect').value;
+    if (idx === '') return;
+    const ev = currentEvents[parseInt(idx)];
+    if (!ev) return;
+    const fmt = (iso) => {
+        const d = new Date(iso);
+        const pad = n => String(n).padStart(2,'0');
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    };
+    document.getElementById('startTime').value = fmt(ev.window_start);
+    document.getElementById('endTime').value = fmt(ev.window_end);
+    doQuery();
 }
 
 // === 初始化 ===
 initTime();
 buildTree();
-window.addEventListener('resize', () => { if (chart) chart.resize(); });
+addToolbarButtons();
+
 </script>
 </body>
 </html>"""
@@ -2305,12 +2456,154 @@ def api_trend():
         return jsonify({"error": f"查询失败: {str(e)[:200]}"}), 500
 
 
+# === 开口事件检测 API ===
+@app.route("/api/trend/events")
+def api_trend_events():
+    """检测开口事件：遥控变量=1 且 回转位置穿过90° → 前后各1分钟窗口
+    
+    设备信号映射：
+    ┌──────────┬─────────────────────┬──────────────────────┐
+    │ 设备     │ 遥控变量            │ 回转位置             │
+    ├──────────┼─────────────────────┼──────────────────────┤
+    │ 东开口机 │ LT_LQFC_57 (选择)   │ LT_LQFC_63 (位置)    │
+    │ 西开口机 │ LT_LQFC_94 (选择)   │ LT_LQFC_100 (位置)   │
+    └──────────┴─────────────────────┴──────────────────────┘
+    """
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    if not start or not end:
+        return jsonify({"error": "缺少时间参数"}), 400
+
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return jsonify({"error": "时间格式错误"}), 400
+
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+
+    # 事件配置: {设备名: {remote: 遥控参数, position: 位置参数, threshold: 到位阈值}}
+    EVENT_CONFIG = {
+        "东开口机": {"remote": "LT_LQFC_57", "position": "LT_LQFC_63", "threshold": 90},
+        "西开口机": {"remote": "LT_LQFC_94", "position": "LT_LQFC_100", "threshold": 90},
+    }
+
+    # 收集所有需要查询的参数
+    all_params = []
+    for cfg in EVENT_CONFIG.values():
+        all_params.append(cfg["remote"])
+        all_params.append(cfg["position"])
+    param_filter = sanitize_param_for_flux(all_params)
+
+    client = get_client()
+    query_api = client.query_api()
+
+    # 1s 粒度查询遥控和位置信号
+    flux = f'''from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {s_utc}, stop: {e_utc})
+  |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
+  |> filter(fn: (r) => r._field == "value")
+  |> filter(fn: (r) => {param_filter})
+  |> aggregateWindow(every: 1s, fn: mean, createEmpty: false)'''
+
+    try:
+        tables = query_api.query(flux)
+    except Exception as e:
+        return jsonify({"error": f"InfluxDB 查询失败: {str(e)[:200]}"}), 500
+
+    # 组织: {param: [(utc_datetime, value), ...]}
+    raw_data = {}
+    for table in tables:
+        for record in table.records:
+            p = record.values.get("param", "")
+            t = record.get_time()
+            v = record.get_value()
+            if v is None:
+                continue
+            if p not in raw_data:
+                raw_data[p] = []
+            raw_data[p].append((t, float(v)))
+
+    # 为每个设备检测事件
+    all_events = []
+
+    for machine, cfg in EVENT_CONFIG.items():
+        pos_param = cfg["position"]
+        rem_param = cfg["remote"]
+        threshold = cfg["threshold"]
+
+        pos_pts = raw_data.get(pos_param, [])
+        rem_pts = raw_data.get(rem_param, [])
+
+        if len(pos_pts) < 2 or len(rem_pts) < 2:
+            continue
+
+        pos_pts.sort(key=lambda x: x[0])
+        rem_pts.sort(key=lambda x: x[0])
+
+        # 遥控信号 → {utc_ts: value}
+        rem_map = {t.timestamp(): v for t, v in rem_pts}
+
+        # 检测回转位置穿过 90°: 从 <90 → >=90
+        raw_events = []
+        for i in range(1, len(pos_pts)):
+            prev_v = pos_pts[i - 1][1]
+            curr_v = pos_pts[i][1]
+            if prev_v < threshold and curr_v >= threshold:
+                t_cross = pos_pts[i][0]  # UTC
+                t_cross_ts = t_cross.timestamp()
+
+                # 检查同一时刻遥控信号是否为 1
+                # 允许 ±1s 容差（1s 粒度可能不完全对���）
+                remote_on = False
+                for offset in (-1, 0, 1):
+                    check_ts = t_cross_ts + offset
+                    found = None
+                    for ts, val in rem_pts:
+                        if abs(ts.timestamp() - check_ts) < 0.5:
+                            found = val
+                            break
+                    if found is not None and found >= 0.5:
+                        remote_on = True
+                        break
+
+                if remote_on:
+                    t_local = (t_cross + LOCAL_OFFSET).replace(tzinfo=timezone(LOCAL_OFFSET))
+                    raw_events.append(t_local)
+
+        # 去重合并: 同一设备 5 秒内的多次触发合并为一次，取第一次时间
+        merged = []
+        for t in raw_events:
+            if not merged or (t - merged[-1]).total_seconds() > 5:
+                merged.append(t)
+
+        for t in merged:
+            ws = t - timedelta(minutes=1)
+            we = t + timedelta(minutes=1)
+            all_events.append({
+                "machine": machine,
+                "event_type": "遥控开口",
+                "trigger_time": t.isoformat(),
+                "window_start": ws.isoformat(),
+                "window_end": we.isoformat(),
+                "label": f"{machine} 遥控开口 {ws.strftime('%H:%M:%S')} ~ {we.strftime('%H:%M:%S')}",
+            })
+
+    all_events.sort(key=lambda e: e["trigger_time"])
+    return jsonify({"events": all_events, "count": len(all_events)})
+
+
 @app.route("/trend")
 def trend():
     html = TREND_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
     html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
-    return render_template_string(html)
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 if __name__ == "__main__":

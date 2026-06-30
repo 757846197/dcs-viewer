@@ -42,14 +42,15 @@
         "LT_LQFC_129", "LT_LQFC_130", "LT_LQFC_131", "LT_LQFC_132", "LT_LQFC_133",
         "LT_LQFC_134", "LT_LQFC_135", "LT_LQFC_136", "LT_LQFC_137", "LT_LQFC_138",
         "LT_LQFC_139", "LT_LQFC_140", "LT_LQFC_141", "LT_LQFC_142", "LT_LQFC_143",
-        "LT_LQFC_144", "LT_LQFC_150", "LT_LQFC_151"
+        "LT_LQFC_144", "LT_LQFC_150", "LT_LQFC_151", "LT_LQFC_179"
       ],
       "categories": {
         "control": ["LT_LQFC_129", "LT_LQFC_130", "LT_LQFC_131", "LT_LQFC_132", "LT_LQFC_133", "LT_LQFC_134"],
         "position": ["LT_LQFC_135", "LT_LQFC_137", "LT_LQFC_143", "LT_LQFC_144"],
         "pressure": ["LT_LQFC_136", "LT_LQFC_138", "LT_LQFC_139", "LT_LQFC_140"],
         "safety": ["LT_LQFC_141", "LT_LQFC_142"],
-        "hydraulic": ["LT_LQFC_150", "LT_LQFC_151"]
+        "hydraulic": ["LT_LQFC_150", "LT_LQFC_151"],
+        "mud_quantity": ["LT_LQFC_179"]
       }
     },
     {
@@ -60,14 +61,15 @@
         "LT_LQFC_152", "LT_LQFC_153", "LT_LQFC_154", "LT_LQFC_155", "LT_LQFC_156",
         "LT_LQFC_157", "LT_LQFC_158", "LT_LQFC_159", "LT_LQFC_160", "LT_LQFC_161",
         "LT_LQFC_162", "LT_LQFC_163", "LT_LQFC_164", "LT_LQFC_165", "LT_LQFC_166",
-        "LT_LQFC_167", "LT_LQFC_173", "LT_LQFC_174"
+        "LT_LQFC_167", "LT_LQFC_173", "LT_LQFC_174", "LT_LQFC_180"
       ],
       "categories": {
         "control": ["LT_LQFC_152", "LT_LQFC_153", "LT_LQFC_154", "LT_LQFC_155", "LT_LQFC_156", "LT_LQFC_157"],
         "position": ["LT_LQFC_158", "LT_LQFC_160", "LT_LQFC_166", "LT_LQFC_167"],
         "pressure": ["LT_LQFC_159", "LT_LQFC_161", "LT_LQFC_162", "LT_LQFC_163"],
         "safety": ["LT_LQFC_164", "LT_LQFC_165"],
-        "hydraulic": ["LT_LQFC_173", "LT_LQFC_174"]
+        "hydraulic": ["LT_LQFC_173", "LT_LQFC_174"],
+        "mud_quantity": ["LT_LQFC_180"]
       }
     }
   ],
@@ -145,7 +147,9 @@
     "LT_LQFC_166": "西堵口机等待位置",
     "LT_LQFC_167": "西堵口机工作位置",
     "LT_LQFC_173": "西堵口机液压温度",
-    "LT_LQFC_174": "西堵口机液压压力"
+    "LT_LQFC_174": "西堵口机液压压力",
+    "LT_LQFC_179": "东堵口机打泥量",
+    "LT_LQFC_180": "西堵口机打泥量"
   },
   "analysis_model": {
     "description": "高炉炉前开/堵口作业智能化辅助模型 — 基于GBDT-MPC-PID三级协同架构",
