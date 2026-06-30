@@ -2034,6 +2034,13 @@ function toggleParam(param, el) {
         selectedParams.splice(idx, 1);
         el.classList.remove('checked');
         el.querySelector('.check-box').textContent = '';
+        // 同步隐藏/移除图例中对应项
+        if (uplot) {
+            const sIdx = uplot.series.findIndex(s => s.label === (LABELS[param] || param));
+            if (sIdx > 0) {
+                uplot.setSeries(sIdx, { show: false }, false);
+            }
+        }
     } else {
         selectedParams.push({
             param: param,
@@ -2042,7 +2049,7 @@ function toggleParam(param, el) {
             yAxisIndex: 0,
             yMin: '',
             yMax: '',
-            offset: 0  // Y轴位置偏移量（不改变数据值，仅影响渲染）
+            offset: 0
         });
         el.classList.add('checked');
         el.querySelector('.check-box').textContent = '✓';
@@ -2306,14 +2313,26 @@ function toggleSeriesVis(idx, el) {
     uplot.redraw();
     el.style.opacity = visible ? '0.35' : '1';
     el.dataset.hidden = visible ? '1' : '0';
-    // 同步隐藏/显示 tooltip 中对应的行 (用 uPlot 当前 series idx 重新查询)
-    if (window._tipRows && uplot.series[idx]) {
+    // 同步 tooltip 中对应的行（按 label 匹配）
+    if (uplot.series[idx]) {
         const label = uplot.series[idx].label;
         document.querySelectorAll('#uplot-tooltip [data-tip-row]').forEach(row => {
-            // 匹配 label: 通过 _rawValues 数组下标找原 param
             const rowIdx = parseInt(row.dataset.tipRow);
             if (uplot.series[rowIdx + 1] && uplot.series[rowIdx + 1].label === label) {
                 row.style.display = visible ? 'none' : 'flex';
+            }
+        });
+    }
+    // 同步左侧导航勾选状态
+    const cfg = selectedParams.find(x => x.label === s.label);
+    if (cfg) {
+        const param = cfg.param;
+        document.querySelectorAll('.tree-param').forEach(node => {
+            if ((node.dataset.param || node.getAttribute('data-param')) === param) {
+                if (visible) node.classList.remove('checked');
+                else node.classList.add('checked');
+                const cb = node.querySelector('.check-box');
+                if (cb) cb.textContent = visible ? '' : '✓';
             }
         });
     }
