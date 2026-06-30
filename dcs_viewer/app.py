@@ -1910,8 +1910,8 @@ function tooltipPlugin() {
         hooks: {
             init: (u) => {
                 over = u.over;
-                const wrap = over.parentElement;
-                wrap.appendChild(tip);
+                tip.owner = u;  // 缓存 uPlot 实例引用
+                document.body.appendChild(tip);
                 over.addEventListener('mouseenter', () => { tip.style.display = 'block'; });
                 over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
             },
@@ -1924,16 +1924,30 @@ function tooltipPlugin() {
                 const pad = n => String(n).padStart(2, '0');
                 const timeStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
                     ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-                let html = '<div style="font-weight:600;margin-bottom:8px;color:#93c5fd;font-size:11px;border-bottom:1px solid #334155;padding-bottom:6px;">' + timeStr + '</div>';
+                let html = '<div style="font-weight:700;margin-bottom:10px;color:#e2e8f0;font-size:12px;' +
+                    'border-bottom:1px solid #334155;padding-bottom:8px;">⏱ ' + timeStr + '</div>';
                 for (let i = 1; i < u.data.length; i++) {
                     const v = u.data[i][idx];
                     const s = u.series[i];
-                    const valStr = v == null ? '--' : Number(v).toFixed(2);
-                    html += '<div style="display:flex;align-items:center;gap:6px;margin:3px 0;white-space:nowrap;">' +
-                        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' +
-                        (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999')) + ';"></span>' +
-                        '<span style="flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;">' + (s.label || '') + '</span>' +
-                        '<span style="font-weight:700;font-variant-numeric:tabular-nums;margin-left:8px;">' + valStr + '</span></div>';
+                    const clr = (typeof s.stroke === 'function') ? '#1677ff' : (s.stroke || '#999');
+                    let valHtml;
+                    if (v == null) {
+                        valHtml = '<span style="color:#64748b;">--</span>';
+                    } else {
+                        const v2 = Number(v).toFixed(2);
+                        // 根据数值大小使用不同颜色层次
+                        let vColor = '#e2e8f0';
+                        if (Math.abs(v) >= 1000) vColor = '#fbbf24';
+                        else if (Math.abs(v) >= 100) vColor = '#a78bfa';
+                        else if (Math.abs(v) >= 10) vColor = '#60a5fa';
+                        valHtml = '<span style="font-weight:700;color:' + vColor + ';font-variant-numeric:tabular-nums;">' + v2 + '</span>';
+                    }
+                    html += '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px;' +
+                        'border-left:3px solid ' + clr + ';border-radius:0 6px 6px 0;' +
+                        'background:rgba(255,255,255,0.04);white-space:nowrap;">' +
+                        '<span style="flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1;font-size:11px;">' +
+                        (s.label || '') + '</span>' +
+                        valHtml + '</div>';
                 }
                 tip.innerHTML = html;
             }
