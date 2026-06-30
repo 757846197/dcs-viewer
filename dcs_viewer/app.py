@@ -2552,18 +2552,18 @@ def api_trend_events():
         all_params.append(cfg["position"])
     param_filter = sanitize_param_for_flux(all_params)
 
-    client = get_client()
-    query_api = client.query_api()
+    try:
+        client = get_client()
+        query_api = client.query_api()
 
-    # 1s 粒度查询遥控和位置信号
-    flux = f'''from(bucket: "{INFLUX_BUCKET}")
+        # 1s 粒度查询遥控和位置信号
+        flux = f'''from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {s_utc}, stop: {e_utc})
   |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
   |> filter(fn: (r) => r._field == "value")
   |> filter(fn: (r) => {param_filter})
   |> aggregateWindow(every: 1s, fn: mean, createEmpty: false)'''
 
-    try:
         tables = query_api.query(flux)
     except Exception as e:
         return jsonify({"error": f"InfluxDB 查询失败: {str(e)[:200]}"}), 500
