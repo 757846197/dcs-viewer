@@ -617,14 +617,27 @@ function doExport() {
     let url = '/api/export?start=' + encodeURIComponent(startTime) + '&stop=' + encodeURIComponent(endTime) + '&token=' + API_TOKEN;
     if (currentGroup !== 'all') url += '&group=' + currentGroup;
 
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    setTimeout(function() { _showExportDone(); }, 3000);
+    // fetch+blob 确保文件完整下载后再弹出保存
+    fetch(url)
+        .then(resp => {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.blob();
+        })
+        .then(blob => {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+            _showExportDone();
+        })
+        .catch(e => {
+            _exporting = false;
+            document.getElementById('loading').classList.remove('show');
+            alert('导出失败: ' + e.message);
+        });
 }
 
 // === 按日导出（window.open 新标签下载 + 进度提示） ===
@@ -655,28 +668,40 @@ function doDailyExport() {
     document.getElementById('loading').classList.add('show');
 
     var url = '/api/export_daily?date=' + date + '&group=' + group + '&token=' + API_TOKEN;
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // 按日导出较慢，30s 后恢复
-    setTimeout(function() {
-        // 完成状态
-        document.getElementById('loadingSpinner').classList.add('done');
-        document.getElementById('loadingTitle').textContent = '导出完成';
-        document.getElementById('loadingSub').textContent = '文件正在下载中';
-        setTimeout(function() {
-            document.getElementById('loadingSpinner').classList.remove('done');
-            document.getElementById('loadingTitle').textContent = '正在查询 InfluxDB...';
-            document.getElementById('loadingSub').textContent = '可能会需要几秒钟';
-            document.getElementById('loading').classList.remove('show');
+    fetch(url)
+        .then(resp => {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.blob();
+        })
+        .then(blob => {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+            // 完成状态
+            document.getElementById('loadingSpinner').classList.add('done');
+            document.getElementById('loadingTitle').textContent = '导出完成';
+            document.getElementById('loadingSub').textContent = '文件正在下载中';
+            setTimeout(function() {
+                document.getElementById('loadingSpinner').classList.remove('done');
+                document.getElementById('loadingTitle').textContent = '正在查询 InfluxDB...';
+                document.getElementById('loadingSub').textContent = '可能会需要几秒钟';
+                document.getElementById('loading').classList.remove('show');
+                _dailyExporting = false;
+                btn.disabled = false;
+                status.style.display = 'none';
+            }, 1500);
+        })
+        .catch(e => {
             _dailyExporting = false;
             btn.disabled = false;
             status.style.display = 'none';
-        }, 1500);
-    }, 30000);
+            document.getElementById('loading').classList.remove('show');
+            alert('按日导出失败: ' + e.message);
+        });
 }
 
 // 回车键查询
