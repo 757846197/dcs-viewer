@@ -2027,20 +2027,13 @@ function toggleGroup(id) {
     arrow.classList.toggle('open');
 }
 
-// === 勾选/取消变量 ===
+// === 勾选/取消变量（仅管理 selectedParams 池，不触发趋势图刷新） ===
 function toggleParam(param, el) {
     const idx = selectedParams.findIndex(s => s.param === param);
     if (idx >= 0) {
         selectedParams.splice(idx, 1);
         el.classList.remove('checked');
         el.querySelector('.check-box').textContent = '';
-        // 同步隐藏/移除图例中对应项
-        if (uplot) {
-            const sIdx = uplot.series.findIndex(s => s.label === (LABELS[param] || param));
-            if (sIdx > 0) {
-                uplot.setSeries(sIdx, { show: false }, false);
-            }
-        }
     } else {
         selectedParams.push({
             param: param,
@@ -2320,19 +2313,6 @@ function toggleSeriesVis(idx, el) {
             const rowIdx = parseInt(row.dataset.tipRow);
             if (uplot.series[rowIdx + 1] && uplot.series[rowIdx + 1].label === label) {
                 row.style.display = visible ? 'none' : 'flex';
-            }
-        });
-    }
-    // 同步左侧导航勾选状态
-    const cfg = selectedParams.find(x => x.label === s.label);
-    if (cfg) {
-        const param = cfg.param;
-        document.querySelectorAll('.tree-param').forEach(node => {
-            if ((node.dataset.param || node.getAttribute('data-param')) === param) {
-                if (visible) node.classList.remove('checked');
-                else node.classList.add('checked');
-                const cb = node.querySelector('.check-box');
-                if (cb) cb.textContent = visible ? '' : '✓';
             }
         });
     }
