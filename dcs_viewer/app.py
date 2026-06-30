@@ -1758,6 +1758,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .toolbar label { font-size: 11px; color: #64748b; font-weight: 600; }
 .toolbar input[type=datetime-local] { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; }
 .toolbar input[type=datetime-local]:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+/* 事件选择器与左侧参数树风格统一 */
+.event-select-wrap select { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; min-width: 180px; }
+.event-select-wrap select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+.event-select-wrap .label { display: block; font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 2px; }
 .btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; white-space: nowrap; }
 .btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
 .btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); }
@@ -1833,11 +1837,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
             <input type="datetime-local" id="endTime">
         </div>
         <button class="btn btn-primary" onclick="doQuery()">查询</button>
-        <div class="event-box" style="display:flex;align-items:center;gap:6px;margin-left:12px;">
-            <select id="eventSelect" onchange="onEventSelect()" style="font-size:12px;padding:4px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;max-width:200px;">
-                <option value="">-- 选择开口事件 --</option>
-            </select>
-            <button class="btn btn-outline btn-sm" onclick="fetchEvents()" title="检测开口事件">🔍</button>
+        <div class="event-box event-select-wrap">
+            <span class="label">开口事件</span>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <select id="eventSelect" onchange="onEventSelect()">
+                    <option value="">-- 选择开口事件 --</option>
+                </select>
+                <button class="btn btn-outline btn-sm" onclick="fetchEvents()" title="检测开口事件">🔍</button>
+            </div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="clearAll()" style="margin-left:auto;">清空所有变量</button>
     </div>
@@ -1988,8 +1995,9 @@ function buildTree() {
     GROUPS.forEach(g => {
         const div = document.getElementById('items_' + g.id);
         let sub = '';
+        const CAT_CN = {remote_command:'遥控指令', control_valve:'控制阀', position:'位置', pressure:'压力', control:'控制', safety:'安全', hydraulic:'液压', mud_quantity:'打泥量'};
         Object.entries(g.categories).forEach(([cat, params]) => {
-            sub += '<div style="padding:4px 20px;font-size:10px;color:rgba(255,255,255,0.25);text-transform:uppercase;">' + cat + '</div>';
+            sub += '<div style="padding:4px 20px;font-size:10px;color:rgba(255,255,255,0.25);text-transform:uppercase;">' + (CAT_CN[cat] || cat) + '</div>';
             params.forEach(p => {
                 sub += `<div class="tree-param" data-param="${p}" onclick="toggleParam('${p}', this)">
                     <span class="check-box"></span> ${LABELS[p] || p}
