@@ -617,11 +617,13 @@ function doExport() {
     let url = '/api/export?start=' + encodeURIComponent(startTime) + '&stop=' + encodeURIComponent(endTime) + '&token=' + API_TOKEN;
     if (currentGroup !== 'all') url += '&group=' + currentGroup;
 
-    var w = window.open(url, '_blank');
-    if (!w) {
-        window.location.href = url;
-    }
-    // 给服务器一些时间生成文件，然后显示完成
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
     setTimeout(function() { _showExportDone(); }, 3000);
 }
 
@@ -653,10 +655,12 @@ function doDailyExport() {
     document.getElementById('loading').classList.add('show');
 
     var url = '/api/export_daily?date=' + date + '&group=' + group + '&token=' + API_TOKEN;
-    var w = window.open(url, '_blank');
-    if (!w) {
-        window.location.href = url;
-    }
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     // 按日导出较慢，30s 后恢复
     setTimeout(function() {
         // 完成状态
