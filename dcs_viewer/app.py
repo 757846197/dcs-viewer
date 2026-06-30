@@ -1949,10 +1949,8 @@ function tooltipPlugin() {
                 for (let i = 1; i < u.data.length; i++) {
                     const vRaw = (_rawValues[i-1] && _rawValues[i-1][idx] !== undefined) ? _rawValues[i-1][idx] : null;
                     const s = u.series[i];
-                    // 优先用 selectedParams 里存的用户颜色
-                    const cfg = selectedParams.find(x => x.label === s.label);
-                    const clr = (cfg && cfg.color) ? cfg.color
-                              : (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999'));
+                    // 直接从 uPlot series 取颜色，不依赖 selectedParams (左侧勾选池)
+                    const clr = s._color || (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999'));
                     // 数值统一跟随曲线颜色，更直观对应
                     const valHtml = (vRaw == null)
                         ? '<span style="color:#64748b;">--</span>'
@@ -2179,6 +2177,7 @@ function renderChart(data) {
         series.push({
             label: cfg.label,
             stroke: cfg.color,
+            _color: cfg.color,  // tooltip 用（不受 uPlot 内部转换影响）
             width: 2,
             scale: axisToScale[cfg.yAxisIndex],
             spanGaps: false,
