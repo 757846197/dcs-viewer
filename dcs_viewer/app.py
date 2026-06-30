@@ -2285,16 +2285,19 @@ function buildLegend(data) {
     data.series.forEach((s, i) => {
         let cfg = selectedParams.find(x => x.param === s.param);
         if (!cfg) return;
-        html += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;' +
+        html += '<label data-series-idx="' + (i+1) + '" data-series-label="' + s.label + '" style="display:flex;align-items:center;gap:4px;font-size:11px;' +
             'color:#475569;cursor:pointer;user-select:none;padding:2px 0;" ' +
             'onclick="toggleSeriesVis(' + (i+1) + ', this)">' +
             '<span style="width:10px;height:2px;background:' + cfg.color + ';flex-shrink:0;"></span>' +
             s.label + '</label>';
     });
     legendDiv.innerHTML = html;
+    // 绑定隐藏 series 后，uPlot 内部 idx 可能变，所以做 label → uPlot idx 映射缓存
+    legendDiv._labelToIdx = {};
+    data.series.forEach((s, i) => { legendDiv._labelToIdx[s.label] = i + 1; });
 }
 
-// === 图例切换可见性 ===
+// === 图例切换可见性（带 tooltip 同步） ===
 function toggleSeriesVis(idx, el) {
     if (!uplot) return;
     const s = uplot.series[idx];
@@ -2303,10 +2306,16 @@ function toggleSeriesVis(idx, el) {
     uplot.redraw();
     el.style.opacity = visible ? '0.35' : '1';
     el.dataset.hidden = visible ? '1' : '0';
-    // 同步隐藏 tooltip 中对应的行
-    if (window._tipRows) {
-        const row = window._tipRows[idx - 1];  // idx 1-based
-        if (row) row.style.display = visible ? 'none' : 'flex';
+    // 同步隐藏/显示 tooltip 中对应的行 (用 uPlot 当前 series idx 重新查询)
+    if (window._tipRows && uplot.series[idx]) {
+        const label = uplot.series[idx].label;
+        document.querySelectorAll('#uplot-tooltip [data-tip-row]').forEach(row => {
+            // 匹配 label: 通过 _rawValues 数组下标找原 param
+            const rowIdx = parseInt(row.dataset.tipRow);
+            if (uplot.series[rowIdx + 1] && uplot.series[rowIdx + 1].label === label) {
+                row.style.display = visible ? 'none' : 'flex';
+            }
+        });
     }
 }
 
