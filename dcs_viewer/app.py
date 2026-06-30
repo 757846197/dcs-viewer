@@ -2035,10 +2035,13 @@ function toggleParam(param, el) {
         el.classList.remove('checked');
         el.querySelector('.check-box').textContent = '';
     } else {
+        // 若已存在 (color 池里) 找原来的颜色优先, 否则按当前长度分配
+        const existing = selectedParams.find(s => s.param === param);
+        const color = (existing && existing.color) || COLORS[selectedParams.length % COLORS.length];
         selectedParams.push({
             param: param,
             label: LABELS[param] || param,
-            color: COLORS[selectedParams.length % COLORS.length],
+            color: color,
             yAxisIndex: 0,
             yMin: '',
             yMax: '',
