@@ -1877,6 +1877,7 @@ function destroyChart() {
 }
 
 // === 数据转换: API格式 → uPlot列格式 ===
+//   应用每条曲线的 Y轴偏移量 (offset)，仅影响渲染位置不影响原始数据
 function buildUplotData(apiData) {
     const first = apiData.series.find(s => s.data.length > 0);
     if (!first) return null;
@@ -1885,10 +1886,19 @@ function buildUplotData(apiData) {
     apiData.series.forEach(s => {
         const map = {};
         s.data.forEach(d => { map[new Date(d.time).getTime() / 1000] = d.value; });
-        cols.push(timestamps.map(t => (map[t] !== undefined) ? map[t] : null));
+        const cfg = selectedParams.find(x => x.param === s.param);
+        const off = (cfg && cfg.offset) ? cfg.offset : 0;
+        cols.push(timestamps.map(t => {
+            const v = map[t];
+            if (v === undefined) return null;
+            return v + off;  // 视觉上偏移，不影响 tooltip 显示
+        }));
     });
     return cols;
 }
+
+// 记录原始值 (未偏移) 供 tooltip 显示
+let _rawValues = [];
 
 // === 自定义 Tooltip 插件（固定页面右侧） ===
 function tooltipPlugin() {
@@ -1927,19 +1937,19 @@ function tooltipPlugin() {
                 let html = '<div style="font-weight:700;margin-bottom:10px;color:#e2e8f0;font-size:12px;' +
                     'border-bottom:1px solid #334155;padding-bottom:8px;">⏱ ' + timeStr + '</div>';
                 for (let i = 1; i < u.data.length; i++) {
-                    const v = u.data[i][idx];
+                    const vRaw = (_rawValues[i-1] && _rawValues[i-1][idx] !== undefined) ? _rawValues[i-1][idx] : null;
                     const s = u.series[i];
                     const clr = (typeof s.stroke === 'function') ? '#1677ff' : (s.stroke || '#999');
                     let valHtml;
-                    if (v == null) {
+                    if (vRaw == null) {
                         valHtml = '<span style="color:#64748b;">--</span>';
                     } else {
-                        const v2 = Number(v).toFixed(2);
+                        const v2 = Number(vRaw).toFixed(2);
                         // 根据数值大小使用不同颜色层次
                         let vColor = '#e2e8f0';
-                        if (Math.abs(v) >= 1000) vColor = '#fbbf24';
-                        else if (Math.abs(v) >= 100) vColor = '#a78bfa';
-                        else if (Math.abs(v) >= 10) vColor = '#60a5fa';
+                        if (Math.abs(vRaw) >= 1000) vColor = '#fbbf24';
+                        else if (Math.abs(vRaw) >= 100) vColor = '#a78bfa';
+                        else if (Math.abs(vRaw) >= 10) vColor = '#60a5fa';
                         valHtml = '<span style="font-weight:700;color:' + vColor + ';font-variant-numeric:tabular-nums;">' + v2 + '</span>';
                     }
                     html += '<div style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px;' +
@@ -2022,7 +2032,8 @@ function toggleParam(param, el) {
             color: COLORS[selectedParams.length % COLORS.length],
             yAxisIndex: 0,
             yMin: '',
-            yMax: ''
+            yMax: '',
+            offset: 0  // Y轴位置偏移量（不改变数据值，仅影响渲染）
         });
         el.classList.add('checked');
         el.querySelector('.check-box').textContent = '✓';
@@ -2062,9 +2073,12 @@ function renderConfig() {
                 <option value="2" ${s.yAxisIndex===2?'selected':''}>左2</option>
                 <option value="3" ${s.yAxisIndex===3?'selected':''}>右2</option>
             </select>
-            <input type="number" placeholder="Min" value="${s.yMin}" step="any"
+            <span style="font-size:10px;color:#94a3b8;" title="视觉偏移，不影响原始数值">偏移</span>
+            <input type="number" placeholder="0" value="${s.offset||0}" step="any" style="width:55px;"
+                onchange="updateConfig(${i},'offset',parseFloat(this.value)||0)" title="正数上移，负数下移">
+            <input type="number" placeholder="Min" value="${s.yMin}" step="any" style="width:50px;"
                 onchange="updateConfig(${i},'yMin',this.value)">
-            <input type="number" placeholder="Max" value="${s.yMax}" step="any"
+            <input type="number" placeholder="Max" value="${s.yMax}" step="any" style="width:50px;"
                 onchange="updateConfig(${i},'yMax',this.value)">
             <span class="remove-btn" onclick="removeParam(${i})" title="移除">✕</span>
         </div>`;
@@ -2117,6 +2131,9 @@ function renderChart(data) {
 
     const cols = buildUplotData(data);
     if (!cols) return;
+
+    // 缓存原始值（未偏移）供 tooltip 显示
+    _rawValues = data.series.map(s => s.data.map(d => d.value));
 
     // 收集已使用的 Y 轴
     let usedAxes = new Set();
