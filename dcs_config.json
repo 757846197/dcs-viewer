@@ -1,0 +1,10 @@
+{
+  "INFLUX_URL": "http://10.56.128.202:8086",
+  "INFLUX_TOKEN": "odx3aMiszU2cZd5PvvoexXYEXOcR-yJ0opTnXixC38TRttY2xHY-84lyRdC7MPIWgK2IAkoS4ZnPPsNBBFWZEA==",
+  "INFLUX_ORG": "myOrg",
+  "INFLUX_BUCKET": "islag",
+  "INFLUX_TIMEOUT_MS": 180000,
+  "FLASK_HOST": "0.0.0.0",
+  "FLASK_PORT": 5000,
+  "APP_TOKEN": "dcs2026"
+}

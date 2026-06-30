@@ -10,7 +10,12 @@ import re
 from pathlib import Path
 
 # === 配置文件路径 ===
-_EXE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent.parent
+def _get_exe_dir():
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent
+
+_EXE_DIR = _get_exe_dir()
 _CONFIG_FILE = _EXE_DIR / "dcs_config.json"
 
 # === 内置默认值 ===

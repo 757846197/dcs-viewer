@@ -1601,7 +1601,8 @@ function doFetch() {
         .catch(err => {
             document.getElementById('loadingBar').classList.add('hide');
             document.getElementById('statusDot').style.background = '#ff4d4f';
-            document.getElementById('statusText').textContent = '连接失败';
+            const msg = (err && err.message) || String(err);
+            document.getElementById('statusText').textContent = '错误: ' + msg;
             console.error('fetch 错误:', err);
         });
 }
