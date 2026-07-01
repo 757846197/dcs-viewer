@@ -3718,14 +3718,6 @@ tr:hover { background: #f8fafc; }
     </div>
 
     <div class="nav-section">
-        <div class="nav-section-title">页面导航</div>
-        <a class="nav-item" href="/">历史查询</a>
-        <a class="nav-item" href="/realtime">实时监控</a>
-        <a class="nav-item" href="/trend">趋势分析</a>
-        <a class="nav-item active" href="/analysis">作业分析</a>
-    </div>
-
-    <div class="nav-section">
         <div class="nav-section-title">分析功能</div>
         <a class="nav-item" href="javascript:switchOpType('opening')" id="navOpening">开口作业分析</a>
         <a class="nav-item" href="javascript:switchOpType('plugging')" id="navPlugging">堵口作业分析</a>
