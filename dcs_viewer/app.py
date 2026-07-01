@@ -1127,6 +1127,19 @@ def api_login():
     return jsonify({"ok": False, "error": "账号或密码错误"})
 
 
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.pop("logged_in", None)
+    return jsonify({"ok": True, "redirect": "/"})
+
+
+@app.route("/api/user")
+def api_user():
+    if session.get("logged_in"):
+        return jsonify({"logged_in": True, "username": "admin"})
+    return jsonify({"logged_in": False})
+
+
 @app.route("/debug")
 def debug():
     return jsonify({
@@ -3659,6 +3672,12 @@ tr:hover { background: #f8fafc; }
 .empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
 .empty-state p { font-size: 12px; }
 
+/* === 用户区域 === */
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
+
 /* === 响应式 === */
 @media (max-width: 768px) {
     .sidebar { width: 60px; min-width: 60px; }
@@ -3707,6 +3726,10 @@ tr:hover { background: #f8fafc; }
         <h1>炉前作业分析</h1>
         <span class="badge">GBDT-MPC-PID</span>
         <span class="breadcrumb">周期识别 · 指标提取 · 数据标注</span>
+        <div class="user-area" id="userArea">
+            <span class="user-name" id="userName">admin</span>
+            <button class="btn-logout" onclick="doLogout()">退出</button>
+        </div>
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -3777,6 +3800,20 @@ function initDates(){
     document.getElementById('dStart').value = d1.toISOString().slice(0,16);
 }
 initDates();
+checkLogin();
+
+function checkLogin(){
+    fetch('/api/user?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        if(!d.logged_in){window.location.href='/';}
+        if(d.username)document.getElementById('userName').textContent=d.username;
+    }).catch(function(){window.location.href='/';});
+}
+
+function doLogout(){
+    fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+        window.location.href='/';
+    });
+}
 
 function showLoading(msg){
     document.getElementById('loadingMsg').textContent = msg || '正在查询...';
