@@ -3569,130 +3569,188 @@ ANALYSIS_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>作业分析 — DCS</title>
+<title>炉前作业分析 — DCS</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
-.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744 0%,#243356 50%,#2d3f66 100%);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
-.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
-.sidebar-header h2{font-size:16px;font-weight:700}
-.sidebar-header .version{font-size:10px;opacity:0.4;margin-top:3px}
-.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none}
-.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
-.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
-.sidebar-footer{margin-top:auto;padding:14px 20px;font-size:11px;border-top:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.35)}
-.sidebar-footer .dot{display:inline-block;width:6px;height:6px;background:#52c41a;border-radius:50%;margin-right:6px}
-.main{margin-left:220px;flex:1;min-height:100vh}
-.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
-.header h1{font-size:18px;font-weight:700}
-.header .badge{background:linear-gradient(135deg,#faad14,#d48806);color:#fff;font-size:10px;padding:2px 10px;border-radius:12px;font-weight:500}
-.header .nav-links{margin-left:auto;display:flex;gap:6px}
-.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500}
-.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
-.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
-.container{padding:24px 32px}
-.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:18px}
-.stat-card{background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 1px 8px rgba(0,0,0,0.04)}
-.stat-card .stat-label{font-size:11px;color:#94a3b8;font-weight:600}
-.stat-card .stat-value{font-size:24px;font-weight:700;color:#0f172a;margin-top:4px}
-.stat-card .stat-detail{font-size:11px;color:#94a3b8;margin-top:2px}
-.card{background:#fff;border-radius:12px;box-shadow:0 1px 8px rgba(0,0,0,0.04);overflow:hidden;margin-bottom:16px}
-.card-header{padding:14px 20px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
-.card-body{padding:20px}
-.filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
-.filter-group{display:flex;flex-direction:column;gap:4px}
-.filter-group label{font-size:11px;color:#64748b;font-weight:600}
-.filter-group input,.filter-group select{padding:7px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:13px;outline:none;background:#fff}
-.filter-group input:focus,.filter-group select:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
-.btn{padding:7px 18px;border:none;border-radius:7px;font-size:13px;cursor:pointer;font-weight:600;transition:all .2s}
-.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
-.btn-primary:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
-.btn-primary:disabled{background:#b0c4de;cursor:not-allowed}
-.btn-success{background:linear-gradient(135deg,#52c41a,#389e0d);color:#fff}
-.btn-success:hover{background:linear-gradient(135deg,#73d13d,#52c41a)}
-.btn-sm{padding:5px 12px;font-size:11px}
-.btn-outline{padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b;font-weight:500}
-.btn-outline:hover{border-color:#1677ff;color:#1677ff;background:#f0f5ff}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{background:#f8fafc;font-weight:600;text-align:left;padding:8px 10px;color:#64748b;font-size:11px;border-bottom:1px solid #f1f5f9}
-td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
-tr:hover{background:#f8fafc}
-.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
-.tag-ok{background:#ecfdf5;color:#059669}
-.tag-fail{background:#fef2f2;color:#dc2626}
-.tag-warn{background:#fffbeb;color:#d97706}
-.tag-info{background:#eff6ff;color:#2563eb}
-.loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.25);z-index:9999;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
-.loading-overlay.show{display:flex}
-.loading-box{background:#fff;padding:28px 40px;border-radius:12px;text-align:center}
-.spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:#1677ff;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 14px}
-@keyframes spin{to{transform:rotate(360deg)}}
-.chart-area{min-height:400px;position:relative}
-.empty-state{text-align:center;padding:40px;color:#94a3b8}
-.empty-state h3{font-size:15px;margin-bottom:6px}
-.empty-state p{font-size:12px}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+
+/* === 左侧导航 === */
+.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
+.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
+.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
+.nav-section { padding: 12px 0; }
+.nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
+.nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
+.nav-item .count { margin-left: auto; background: rgba(255,255,255,0.1); font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
+.sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
+
+/* === 主内容区 === */
+.main { margin-left: 220px; flex: 1; min-height: 100vh; }
+.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
+.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.header .badge { background: linear-gradient(135deg, #faad14, #d48806); color: #fff; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
+.header .breadcrumb { font-size: 12px; color: #94a3b8; }
+.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
+.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
+.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
+.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
+.container { padding: 24px 32px; }
+
+/* === 统计卡片 === */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
+.stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
+.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
+.stat-card .stat-detail { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+
+/* === 卡片 === */
+.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
+.card-body { padding: 24px; }
+.card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
+
+/* === 筛选栏 === */
+.filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: column; gap: 5px; }
+.filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
+.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; min-width: 130px; }
+.filter-group input:focus, .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+
+.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
+.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
+.btn-primary:disabled { background: #b0c4de; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
+.btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
+.btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; }
+.btn-ghost:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
+
+/* === 表格 === */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: #f8fafc; font-weight: 600; text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; border-bottom: 1px solid #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; }
+td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+tr:hover { background: #f8fafc; }
+
+/* === 标签 === */
+.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.tag-ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.tag-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.tag-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.tag-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+/* === 加载 === */
+.loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
+.loading-overlay.show { display: flex; }
+.loading-box { background: #fff; padding: 32px 48px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+.spinner { width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s cubic-bezier(0.4,0,0.2,1) infinite; margin: 0 auto 16px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* === 图表 === */
+.chart-area { min-height: 400px; position: relative; }
+
+/* === 空状态 === */
+.empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
+.empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
+.empty-state p { font-size: 12px; }
+
+/* === 响应式 === */
+@media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar .nav-item span { display: none; }
+    .sidebar .nav-section-title { display: none; }
+    .sidebar .count { display: none; }
+    .main { margin-left: 60px; }
+    .filter-bar { flex-direction: column; }
+}
 </style>
 </head>
 <body>
+
+<!-- === 左侧导航 === -->
 <div class="sidebar">
-<div class="sidebar-header"><h2>DCS 分析平台</h2><div class="version">开口机 · 堵口机</div></div>
-<a class="nav-item" href="/">历史查询</a>
-<a class="nav-item" href="/realtime">实时监控</a>
-<a class="nav-item" href="/trend">趋势分析</a>
-<a class="nav-item active" href="/analysis">作业分析</a>
-<div class="sidebar-footer"><span class="dot"></span> InfluxDB 2.7</div>
+    <div class="sidebar-header">
+        <h2>DCS 分析平台</h2>
+        <div class="version">开口机 · 堵口机</div>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">页面导航</div>
+        <a class="nav-item" href="/">历史查询</a>
+        <a class="nav-item" href="/realtime">实时监控</a>
+        <a class="nav-item" href="/trend">趋势分析</a>
+        <a class="nav-item active" href="/analysis">作业分析</a>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">设备分组</div>
+        <a class="nav-item" href="/">东开口机 <span class="count">19</span></a>
+        <a class="nav-item" href="/">西开口机 <span class="count">19</span></a>
+        <a class="nav-item" href="/">东堵口机 <span class="count">18</span></a>
+        <a class="nav-item" href="/">西堵口机 <span class="count">18</span></a>
+    </div>
+
+    <div class="sidebar-footer">
+        <span class="dot"></span> 已连接 InfluxDB 2.7
+    </div>
 </div>
 
+<!-- === 主内容 === -->
 <div class="main">
-<div class="header">
-<h1>炉前作业分析</h1>
-<span class="badge">GBDT-MPC-PID</span>
-<div class="nav-links">
-<a href="/">历史查询</a>
-<a href="/realtime">实时监控</a>
-<a href="/trend">趋势分析</a>
-<a href="/analysis" class="active">作业分析</a>
-</div>
-</div>
 
-<div class="container">
+    <div class="header">
+        <h1>炉前作业分析</h1>
+        <span class="badge">GBDT-MPC-PID</span>
+        <span class="breadcrumb">周期识别 · 指标提取 · 数据标注</span>
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis" class="active">作业分析</a>
+        </div>
+    </div>
 
-<div class="filter-bar">
-<div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
-<div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
-<div class="filter-group"><label>作业类型</label>
-<select id="dType"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
-</div>
-<button class="btn btn-primary" onclick="runAnalysis()">开始分析</button>
-<button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
-</div>
+    <div class="container">
 
-<div class="stats-row" id="statsRow"></div>
+        <div class="filter-bar">
+            <div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
+            <div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
+            <div class="filter-group"><label>作业类型</label>
+                <select id="dType"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="runAnalysis()">开始分析</button>
+            <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
+        </div>
 
-<div class="card">
-<div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
-<div class="card-body" style="overflow-x:auto">
-<div id="cycleEmpty" class="empty-state"><h3>尚未分析</h3><p>选择时间范围后点击「开始分析」</p></div>
-<table id="cycleTable" style="display:none">
-<thead><tr>
-<th>设备</th><th>类型</th><th>触发时间</th><th>窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
-</tr></thead>
-<tbody id="cycleBody"></tbody>
-</table>
-</div>
-</div>
+        <div class="stats-row" id="statsRow"></div>
 
-<div class="card" id="detailCard" style="display:none">
-<div class="card-header">作业详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span></div>
-<div class="card-body">
-<div id="detailMetrics" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
-<div class="chart-area"><canvas id="detailChart"></canvas></div>
-</div>
-</div>
+        <div class="card">
+            <div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
+            <div class="card-body" style="overflow-x:auto">
+                <div id="cycleEmpty" class="empty-state"><h3>尚未分析</h3><p>选择时间范围后点击「开始分析」，自动识别开口和堵口作业周期</p></div>
+                <table id="cycleTable" style="display:none">
+                    <thead><tr>
+                        <th>设备</th><th>类型</th><th>触发时间</th><th>窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
+                    </tr></thead>
+                    <tbody id="cycleBody"></tbody>
+                </table>
+            </div>
+        </div>
 
-</div>
+        <div class="card" id="detailCard" style="display:none">
+            <div class="card-header">作业详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span></div>
+            <div class="card-body">
+                <div id="detailMetrics" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
+                <div class="chart-area"><canvas id="detailChart"></canvas></div>
+            </div>
+        </div>
+
+    </div>
 </div>
 
 <div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
@@ -3704,8 +3762,11 @@ var chartInst = null;
 var PARAM_CONFIG = {{ groups_json | safe }};
 
 function getLabelMap(){
-    var groups = PARAM_CONFIG.groups || [];
-    var labels = PARAM_CONFIG.labels || {};
+    var labels = {};
+    (PARAM_CONFIG.groups || []).forEach(function(g){
+        if(g.labels) Object.assign(labels, g.labels);
+    });
+    if(PARAM_CONFIG.labels) Object.assign(labels, PARAM_CONFIG.labels);
     return labels;
 }
 
@@ -3727,7 +3788,7 @@ function renderTag(result){
     if(result=='success') return '<span class="tag tag-ok">成功</span>';
     if(result=='fail') return '<span class="tag tag-fail">失败</span>';
     if(result=='incomplete') return '<span class="tag tag-warn">未完成</span>';
-    if(result=='partial') return '<span class="tag tag-info">部分</span>';
+    if(result=='partial') return '<span class="tag tag-info">未完整</span>';
     return result;
 }
 
@@ -3759,18 +3820,19 @@ function renderStats(){
     var openOk = openCycles.filter(function(c){return c.result=='success';}).length;
     var plugOk = plugCycles.filter(function(c){return c.result=='success';}).length;
 
-    var html = '';
-    html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+'</div><div class="stat-detail">'+openOk+' 次成功</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+'</div><div class="stat-detail">'+plugOk+' 次成功</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">总作业数</div><div class="stat-value">'+globalCycles.length+'</div><div class="stat-detail">'+(openCycles.length+plugCycles.length)+' 次</div></div>';
-
     var avgDur = 0;
     if(globalCycles.length>0){
         var total = globalCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);
         avgDur = Math.round(total/globalCycles.length);
     }
-    html += '<div class="stat-card"><div class="stat-label">平均耗时</div><div class="stat-value">'+avgDur+'s</div><div class="stat-detail">秒</div></div>';
+    var durMin = Math.floor(avgDur/60);
+    var durSec = avgDur%60;
 
+    var html = '';
+    html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+'</div><div class="stat-detail">'+openOk+' 次钻透成功</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+'</div><div class="stat-detail">'+plugOk+' 次完整完成</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">作业总数</div><div class="stat-value">'+globalCycles.length+'</div><div class="stat-detail">开口+堵口</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">平均耗时</div><div class="stat-value">'+durMin+'m'+durSec+'s</div><div class="stat-detail">每炉次</div></div>';
     document.getElementById('statsRow').innerHTML = html;
     document.getElementById('cycleCount').textContent = '共 '+globalCycles.length+' 个周期';
 }
@@ -3790,23 +3852,23 @@ function renderCycles(){
     globalCycles.forEach(function(c,i){
         var keyMetric = '';
         if(c.type=='opening'){
-            keyMetric = '钻进:'+(c.push_pos_change||0).toFixed(3)+'m 推进峰:'+(c.push_press_peak||0).toFixed(0)+'MPa';
+            keyMetric = '钻进'+(c.push_pos_change||0).toFixed(3)+'m | 推进峰'+(c.push_press_peak||0).toFixed(0)+'MPa';
         }else{
-            keyMetric = '打泥量:'+(c.mud_qty||0).toFixed(1)+'MPa 峰:'+(c.mud_press_peak||0).toFixed(0)+'MPa';
+            keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
         }
         var winStart = (c.window_start||'').substring(11,19);
         var winEnd = (c.window_end||'').substring(11,19);
         var durMin = Math.floor((c.duration_s||0)/60);
         var durSec = Math.round((c.duration_s||0)%60);
         html += '<tr>';
-        html += '<td>'+c.machine+'</td>';
+        html += '<td style="font-weight:600">'+c.machine+'</td>';
         html += '<td>'+renderOpType(c.type)+'</td>';
         html += '<td>'+(c.trigger_time||'').substring(11,19)+'</td>';
         html += '<td>'+winStart+' ~ '+winEnd+'</td>';
         html += '<td>'+durMin+'分'+durSec+'秒</td>';
-        html += '<td>'+keyMetric+'</td>';
+        html += '<td style="font-size:11px">'+keyMetric+'</td>';
         html += '<td>'+renderTag(c.result)+'</td>';
-        html += '<td><button class="btn-outline" onclick="showDetail('+i+')">详情</button></td>';
+        html += '<td><button class="btn-ghost" onclick="showDetail('+i+')">详情</button></td>';
         html += '</tr>';
     });
     tbody.innerHTML = html;
@@ -3818,8 +3880,6 @@ function showDetail(idx){
     document.getElementById('detailCard').style.display = '';
     document.getElementById('detailTitle').textContent = c.machine + ' / ' + (c.type=='opening'?'开口':'堵口');
     document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
-
-    var labels = getLabelMap();
 
     showLoading('正在提取指标...');
     var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
@@ -3834,14 +3894,14 @@ function showDetail(idx){
 function renderMetrics(m){
     var html = '';
     if(m.type=='opening'){
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:20px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:20px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力均值</div><div class="stat-value" style="font-size:20px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:20px">'+(m.breakthrough?'<span style="color:#059669">是</span>':'<span style="color:#dc2626">否</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
     }else{
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:20px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:20px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:20px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail">'+(m.hold_ok?'<span style="color:#059669">合格</span>':'<span style="color:#dc2626">不足</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格':'保压不足')+'</div></div>';
     }
     document.getElementById('detailMetrics').innerHTML = html;
 }
@@ -3873,7 +3933,6 @@ function loadDetailChart(c, metrics){
 
         data.series.forEach(function(s,i){
             var pts = s.data || [];
-            var times = pts.map(function(p){return new Date(p.time)});
             var values = pts.map(function(p){return p.value});
 
             var isPos = (s.param||'').indexOf('67')>0 || (s.param||'').indexOf('104')>0 || (s.param||'').indexOf('160')>0;
@@ -3895,7 +3954,7 @@ function loadDetailChart(c, metrics){
         chartInst = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: data.series.length>0 ? (data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN')}) : [],
+                labels: data.series.length>0 ? (data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}) : [],
                 datasets: datasets
             },
             options: {
