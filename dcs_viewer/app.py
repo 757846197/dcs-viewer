@@ -148,16 +148,50 @@ def check_config() -> list[str]:
         warnings.append("[WARN] INFLUX_TOKEN 未设置 — InfluxDB 连接将失败")
     return warnings
 
+# === 把所有 config 符号注入到 _config_mod 模块对象（替代 import 语法） ===
+_config_mod.INFLUX_URL = INFLUX_URL
+_config_mod.INFLUX_TOKEN = INFLUX_TOKEN
+_config_mod.INFLUX_ORG = INFLUX_ORG
+_config_mod.INFLUX_BUCKET = INFLUX_BUCKET
+_config_mod.INFLUX_MEASUREMENT = INFLUX_MEASUREMENT
+_config_mod.INFLUX_TIMEOUT_MS = INFLUX_TIMEOUT_MS
+_config_mod.FLASK_HOST = FLASK_HOST
+_config_mod.FLASK_PORT = FLASK_PORT
+_config_mod.APP_TOKEN = APP_TOKEN
+_config_mod.SETTINGS_PASSWORD = SETTINGS_PASSWORD
+_config_mod.MAX_QUERY_HOURS = MAX_QUERY_HOURS
+_config_mod.MAX_WEB_ROWS = MAX_WEB_ROWS
+_config_mod.MAX_EXCEL_ROWS = MAX_EXCEL_ROWS
+_config_mod.EXPORT_CHUNK_HOURS = EXPORT_CHUNK_HOURS
+_config_mod.LOCAL_TZ_OFFSET_HOURS = LOCAL_TZ_OFFSET_HOURS
+_config_mod.sanitize_param_for_flux = sanitize_param_for_flux
+_config_mod.check_config = check_config
+_config_mod.save_runtime_config = save_runtime_config
+_config_mod.get_current_config = get_current_config
+_config_mod.validate_param_name = validate_param_name
+_config_mod.validate_params = validate_params
+
 sys.modules['config'] = _config_mod
 
-from config import (  # noqa: E402
-    INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET,
-    INFLUX_MEASUREMENT, INFLUX_TIMEOUT_MS,
-    FLASK_HOST, FLASK_PORT, APP_TOKEN,
-    MAX_QUERY_HOURS, MAX_WEB_ROWS, MAX_EXCEL_ROWS, EXPORT_CHUNK_HOURS,
-    sanitize_param_for_flux, check_config,
-    SETTINGS_PASSWORD, save_runtime_config, get_current_config,
-)
+# === 兼容：本地代码仍可 from config import ... ===
+INFLUX_URL = INFLUX_URL
+INFLUX_TOKEN = INFLUX_TOKEN
+INFLUX_ORG = INFLUX_ORG
+INFLUX_BUCKET = INFLUX_BUCKET
+INFLUX_MEASUREMENT = INFLUX_MEASUREMENT
+INFLUX_TIMEOUT_MS = INFLUX_TIMEOUT_MS
+FLASK_HOST = FLASK_HOST
+FLASK_PORT = FLASK_PORT
+APP_TOKEN = APP_TOKEN
+SETTINGS_PASSWORD = SETTINGS_PASSWORD
+MAX_QUERY_HOURS = MAX_QUERY_HOURS
+MAX_WEB_ROWS = MAX_WEB_ROWS
+MAX_EXCEL_ROWS = MAX_EXCEL_ROWS
+EXPORT_CHUNK_HOURS = EXPORT_CHUNK_HOURS
+sanitize_param_for_flux = sanitize_param_for_flux
+check_config = check_config
+save_runtime_config = save_runtime_config
+get_current_config = get_current_config
 
 app = Flask(__name__)
 app.secret_key = "dcs-viewer-key-20260701"
