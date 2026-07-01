@@ -402,7 +402,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
     </div>
 
     <div class="sidebar-footer">
-        <span class="dot"></span> 已连接 InfluxDB 2.7
+        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span><a style="margin-left:auto;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.45);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a>
     </div>
 </div>
 
@@ -413,7 +413,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
         <h1 id="pageTitle">东开口机</h1>
         <span class="badge">InfluxDB</span>
         <span class="breadcrumb" id="pageDesc">37个信号参数 · 7大类别</span>
-        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
+        
         <div class="nav-links">
             <a href="/" class="active">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -551,7 +551,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
 <script>
 // === 登录检查 ===
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
 function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
 
 // === 初始化 ===
@@ -1731,13 +1731,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 
     <div class="tree" id="treeNav"></div>
 
-    <div class="sidebar-footer" id="sidebarFooter">默认: 全部设备</div>
+    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 默认: 全部设备</div>
 </div>
 
 <div class="main">
     <div class="header">
         <h1>实时数据监控</h1>
-        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
+        
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime" class="active">实时监控</a>
@@ -1787,7 +1787,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 </div>
 
 <script>
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
 function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
 const GROUPS = {{ groups_json | safe }};
 const LABELS = {{ labels_json | safe }};
@@ -2163,13 +2163,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
     </div>
     <div class="tree-section-title">选择变量</div>
     <div class="tree" id="treeNav"></div>
-    <div class="sidebar-footer" id="sidebarFooter">已选 0 个变量</div>
+    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 已选 0 个变量</div>
 </div>
 
 <div class="main">
     <div class="header">
         <h1>趋势分析</h1>
-        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
+        
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -2216,7 +2216,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 </div>
 
 <script>
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
 function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
 const GROUPS = {{ groups_json | safe }};
 const LABELS = {{ labels_json | safe }};
@@ -3756,7 +3756,7 @@ tr:hover { background: #f8fafc; }
     </div>
 
     <div class="sidebar-footer">
-        <span class="dot"></span> 已连接 InfluxDB 2.7
+        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span><a style="margin-left:auto;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.45);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a>
     </div>
 </div>
 
@@ -3766,7 +3766,7 @@ tr:hover { background: #f8fafc; }
         <h1>炉前作业分析</h1>
         <span class="badge">GBDT-MPC-PID</span>
         <span class="breadcrumb" id="pageDesc">周期识别 · 阶段标注 · 指标提取</span>
-        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
+        
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -3848,7 +3848,7 @@ initDates();
 function checkLogin(){
     fetch('/api/user?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
         if(!d.logged_in){window.location.href='/';}
-        if(d.username)document.getElementById('userName').textContent=d.username;
+        if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};
     }).catch(function(e){console.log('Auth check failed, redirecting:', e);window.location.href='/';});
 }
 checkLogin();
