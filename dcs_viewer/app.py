@@ -48,7 +48,7 @@ _CONFIG_FILE = _EXE_DIR_CFG / "dcs_config.json"
 
 _DEFAULTS_CFG = {
     "INFLUX_URL": "http://10.56.128.202:8086",
-    "INFLUX_TOKEN": "",
+    "INFLUX_TOKEN": "odx3aMiszU2cZd5PvvoexXYEXOcR-yJ0opTnXixC38TRttY2xHY-84lyRdC7MPIWgK2IAkoS4ZnPPsNBBFWZEA==",
     "INFLUX_ORG": "myOrg",
     "INFLUX_BUCKET": "islag",
     "INFLUX_TIMEOUT_MS": 180000,
