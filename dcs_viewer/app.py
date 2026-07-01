@@ -412,6 +412,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
             <a href="/" class="active">历史查询</a>
             <a href="/realtime">实时监控</a>
             <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
         </div>
     </div>
 
@@ -1711,6 +1712,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
             <a href="/">历史查询</a>
             <a href="/realtime" class="active">实时监控</a>
             <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
         </div>
     </div>
 
@@ -2134,6 +2136,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
             <a href="/trend" class="active">趋势分析</a>
+            <a href="/analysis">作业分析</a>
         </div>
     </div>
 
@@ -3000,6 +3003,961 @@ def trend():
     return resp
 
 
+# ==============================================================
+# === 炉前作业分析模块 (Layer 1: 周期识别 + Layer 2: 指标提取) ===
+# ==============================================================
+
+# ── 信号配置: 开口机 ──
+_OPENING_SIGNALS = {
+    "east": {
+        "name": "东开口机",
+        "remote": "LT_LQFC_57",      # 开口机选择
+        "swing_pos": "LT_LQFC_63",   # 回转位置
+        "push_pos": "LT_LQFC_67",    # 推进位置
+        "push_press": "LT_LQFC_68",  # 推进压力
+        "drill_press": "LT_LQFC_87", # 转钎压力
+        "impact_press": "LT_LQFC_88",# 冲击压力
+        "cart_cmd": "LT_LQFC_61",    # 小车前进/后退
+        "swing_cmd": "LT_LQFC_59",   # 回转进/退
+        "impact_cmd": "LT_LQFC_69",  # 冲击开/关
+    },
+    "west": {
+        "name": "西开口机",
+        "remote": "LT_LQFC_94",
+        "swing_pos": "LT_LQFC_100",
+        "push_pos": "LT_LQFC_104",
+        "push_press": "LT_LQFC_105",
+        "drill_press": "LT_LQFC_124",
+        "impact_press": "LT_LQFC_125",
+        "cart_cmd": "LT_LQFC_98",
+        "swing_cmd": "LT_LQFC_96",
+        "impact_cmd": "LT_LQFC_106",
+    }
+}
+
+# ── 信号配置: 堵口机 ──
+_PLUGGING_SIGNALS = {
+    "east": {
+        "name": "东堵口机",
+        "plug_select": "LT_LQFC_132",  # 泥炮机选择
+        "mud_cmd": "LT_LQFC_134",      # 打泥前进/后退
+        "mud_pos": "LT_LQFC_137",      # 打泥位置
+        "mud_press": "LT_LQFC_138",    # 打泥压力
+        "mud_qty": "LT_LQFC_179",      # 打泥量
+        "swing_pos": "LT_LQFC_135",    # 回转位置
+        "swing_cmd": "LT_LQFC_133",    # 回转进/退
+        "remote_start": "LT_LQFC_130", # 遥控启动/停止
+    },
+    "west": {
+        "name": "西堵口机",
+        "plug_select": "LT_LQFC_155",
+        "mud_cmd": "LT_LQFC_157",
+        "mud_pos": "LT_LQFC_160",
+        "mud_press": "LT_LQFC_161",
+        "mud_qty": "LT_LQFC_180",
+        "swing_pos": "LT_LQFC_158",
+        "swing_cmd": "LT_LQFC_156",
+        "remote_start": "LT_LQFC_153",
+    }
+}
+
+
+def _fetch_cycle_data(start_utc, end_utc, params, window):
+    """查询指定参数的时间序列数据，返回 {param: [(utc_dt, value), ...]}"""
+    param_filter = sanitize_param_for_flux(params)
+    client = get_client()
+    query_api = client.query_api()
+    flux = f'''from(bucket: "{INFLUX_BUCKET}")
+  |> range(start: {start_utc}, stop: {end_utc})
+  |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
+  |> filter(fn: (r) => r._field == "value")
+  |> filter(fn: (r) => {param_filter})
+  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)'''
+
+    tables = query_api.query(flux)
+    raw = {}
+    for table in tables:
+        for record in table.records:
+            p = record.values.get("param", "")
+            t = record.get_time()
+            v = record.get_value()
+            if v is None:
+                continue
+            if p not in raw:
+                raw[p] = []
+            raw[p].append((t, float(v)))
+    return raw
+
+
+def _detect_opening_cycles(raw_data, sig):
+    """检测开口作业周期（遥控开口→钻进→钻透→退回）"""
+    pos = sorted(raw_data.get(sig["swing_pos"], []), key=lambda x: x[0])
+    push_pos = sorted(raw_data.get(sig["push_pos"], []), key=lambda x: x[0])
+    push_press = sorted(raw_data.get(sig["push_press"], []), key=lambda x: x[0])
+    cart = sorted(raw_data.get(sig["cart_cmd"], []), key=lambda x: x[0])
+    remote = sorted(raw_data.get(sig["remote"], []), key=lambda x: x[0])
+
+    rem_map = {t.timestamp(): v for t, v in remote}
+    cycles = []
+
+    if len(pos) < 2 or len(remote) < 2:
+        return cycles
+
+    for i in range(1, len(pos)):
+        prev_v = pos[i - 1][1]
+        curr_v = pos[i][1]
+        if prev_v < 90 and curr_v >= 90:
+            t_cross = pos[i][0]
+            t_cross_ts = t_cross.timestamp()
+            remote_on = False
+            for offset in (-1, 0, 1):
+                if rem_map.get(t_cross_ts + offset, 0) >= 0.5:
+                    remote_on = True
+                    break
+            if not remote_on:
+                continue
+
+            t_start = t_cross
+            t_local_start = t_start + LOCAL_OFFSET
+
+            drill_press_peak = 0.0
+            push_press_peak = 0.0
+            breakthrough_time = None
+            breakthrough_detected = False
+
+            push_pos_max = None
+            push_pos_change = 0.0
+
+            if push_pos:
+                for t, v in push_pos:
+                    if t < t_start:
+                        push_pos_max = v
+                push_seg = [(t, v) for t, v in push_pos if t >= t_start]
+                if push_seg:
+                    push_pos_final = push_seg[-1][1]
+                    push_pos_change = push_pos_final - push_pos_max if push_pos_max is not None else push_seg[-1][1] - push_seg[0][1]
+            else:
+                push_seg = []
+
+            if push_press:
+                press_seg = [(t, v) for t, v in push_press if t >= t_start and t <= t_start + timedelta(minutes=15)]
+                if press_seg:
+                    push_press_peak = max(v for _, v in press_seg)
+                    for t, v in press_seg:
+                        if t not in [p[0] for p in push_seg]:
+                            continue
+                        push_seg_with_time = sorted([(tp, vp) for tp, vp in push_seg], key=lambda x: x[0])
+                        if len(push_seg_with_time) < 3:
+                            break
+                        idx = next((j for j, (tp, _) in enumerate(push_seg_with_time) if tp >= t), None)
+                        if idx is None or idx < 3:
+                            continue
+                        delta_pos = push_seg_with_time[idx][1] - push_seg_with_time[idx - 3][1]
+                        delta_press = v - push_press[idx - 3][1] if idx - 3 < len(push_press) else 0
+                        if delta_pos > 0.15 and push_press[idx - 3][1] > 0 and (delta_press / push_press[idx - 3][1]) < -0.25:
+                            breakthrough_time = t
+                            breakthrough_detected = True
+                            break
+
+            if drill_press_peak == 0 and sig.get("drill_press") in raw_data:
+                drill_data = raw_data.get(sig["drill_press"], [])
+                drill_seg = [(t, v) for t, v in drill_data if t >= t_start and t <= t_start + timedelta(minutes=15)]
+                if drill_seg:
+                    drill_press_peak = max(v for _, v in drill_seg)
+
+            t_end = t_start + timedelta(minutes=10)
+            if cart:
+                for t, v in cart:
+                    if t > t_start and v < -0.5:
+                        t_end = t
+                        break
+            if pos:
+                standby_found = False
+                for t, v in pos:
+                    if t > t_end - timedelta(minutes=10) and v < 10:
+                        t_end = t
+                        standby_found = True
+                        break
+                if not standby_found:
+                    t_end = t_start + timedelta(minutes=15)
+            else:
+                t_end = t_start + timedelta(minutes=15)
+
+            duration_s = (t_end - t_start).total_seconds()
+
+            if breakthrough_detected:
+                result = "success"
+            elif push_pos_change < 0.01:
+                result = "fail"
+            else:
+                result = "incomplete"
+
+            t_local_end = t_end + LOCAL_OFFSET
+
+            cycles.append({
+                "machine": sig["name"],
+                "type": "opening",
+                "trigger_time": t_local_start.isoformat(),
+                "window_start": t_local_start.isoformat(),
+                "window_end": t_local_end.isoformat(),
+                "duration_s": round(duration_s, 1),
+                "push_pos_change": round(push_pos_change, 3),
+                "push_press_peak": round(push_press_peak, 1),
+                "drill_press_peak": round(drill_press_peak, 1),
+                "breakthrough": breakthrough_detected,
+                "result": result,
+                "label": f"{sig['name']} 开口 {'成' if breakthrough_detected else '未'}钻透 {t_local_start.strftime('%H:%M:%S')} ~ {t_local_end.strftime('%H:%M:%S')}",
+            })
+
+    return cycles
+
+
+def _detect_plugging_cycles(raw_data, sig):
+    """检测堵口作业周期（泥炮选择→打泥→保压→退炮）"""
+    cmd = sorted(raw_data.get(sig["mud_cmd"], []), key=lambda x: x[0])
+    mud_pos = sorted(raw_data.get(sig["mud_pos"], []), key=lambda x: x[0])
+    mud_press = sorted(raw_data.get(sig["mud_press"], []), key=lambda x: x[0])
+    mud_qty = sorted(raw_data.get(sig["mud_qty"], []), key=lambda x: x[0])
+    swing_pos = sorted(raw_data.get(sig["swing_pos"], []), key=lambda x: x[0])
+    plug_select = sorted(raw_data.get(sig["plug_select"], []), key=lambda x: x[0])
+
+    plug_map = {t.timestamp(): v for t, v in plug_select}
+    cycles = []
+
+    if len(cmd) < 2:
+        return cycles
+
+    for i in range(1, len(cmd)):
+        prev_v = cmd[i - 1][1]
+        curr_v = cmd[i][1]
+        if prev_v < 0.5 and curr_v >= 0.5:
+            t_start = cmd[i][0]
+            t_start_ts = t_start.timestamp()
+            plug_on = False
+            for offset in (-1, 0, 1):
+                if plug_map.get(t_start_ts + offset, 0) >= 0.5:
+                    plug_on = True
+                    break
+            if not plug_on:
+                continue
+
+            t_local_start = t_start + LOCAL_OFFSET
+
+            mud_press_peak = 0.0
+            mud_qty_total = 0.0
+            hold_duration_s = 0.0
+            mud_fill_complete = False
+            hold_complete = False
+
+            press_seg = sorted(
+                [(t, v) for t, v in mud_press if t >= t_start and t <= t_start + timedelta(minutes=40)],
+                key=lambda x: x[0]
+            )
+            if press_seg:
+                mud_press_peak = max(v for _, v in press_seg)
+
+                hold_count = 0
+                for _, v in press_seg:
+                    if 18 <= v <= 22:
+                        hold_count += 1
+                    else:
+                        hold_count = 0
+                    if hold_count >= 60:
+                        hold_duration_s = hold_count
+                        hold_complete = True
+                        break
+
+            qty_seg = sorted(
+                [(t, v) for t, v in mud_qty if t >= t_start and t <= t_start + timedelta(minutes=40)],
+                key=lambda x: x[0]
+            )
+            if qty_seg:
+                mud_qty_total = qty_seg[-1][1]
+                mud_fill_complete = mud_qty_total >= 10
+
+            t_end = t_start + timedelta(minutes=30)
+            if press_seg:
+                retreat_found = False
+                for t, v in reversed(press_seg):
+                    if v < 5 and t > t_start + timedelta(seconds=30):
+                        t_end = t
+                        retreat_found = True
+                        break
+                if not retreat_found:
+                    t_end = t_start + timedelta(minutes=40)
+            if swing_pos:
+                swing_seg = [(t, v) for t, v in swing_pos if t > t_end - timedelta(minutes=5) and v < 10]
+                if swing_seg:
+                    t_end = max(t_end, swing_seg[-1][0])
+
+            duration_s = (t_end - t_start).total_seconds()
+
+            if mud_fill_complete and hold_complete:
+                result = "success"
+            elif mud_fill_complete:
+                result = "partial"
+            else:
+                result = "fail"
+
+            t_local_end = t_end + LOCAL_OFFSET
+
+            cycles.append({
+                "machine": sig["name"],
+                "type": "plugging",
+                "trigger_time": t_local_start.isoformat(),
+                "window_start": t_local_start.isoformat(),
+                "window_end": t_local_end.isoformat(),
+                "duration_s": round(duration_s, 1),
+                "mud_press_peak": round(mud_press_peak, 1),
+                "mud_qty": round(mud_qty_total, 1),
+                "hold_duration_s": round(hold_duration_s, 0),
+                "mud_filled": mud_fill_complete,
+                "hold_ok": hold_complete,
+                "result": result,
+                "label": f"{sig['name']} 堵口 {'完' if mud_fill_complete else '未完'} {t_local_start.strftime('%H:%M:%S')} ~ {t_local_end.strftime('%H:%M:%S')}",
+            })
+
+    return cycles
+
+
+# ── API: 作业周期识别 ──
+@app.route("/api/analysis/cycles")
+def api_analysis_cycles():
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    op_type = request.args.get("type", "all").strip()
+
+    if not start or not end:
+        return jsonify({"error": "缺少时间参数"}), 400
+
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return jsonify({"error": "时间格式错误"}), 400
+
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+
+    all_cycles = []
+
+    if op_type in ("opening", "all"):
+        all_op_params = []
+        for side, sig in _OPENING_SIGNALS.items():
+            all_op_params.extend(sig.values())
+        all_op_params = list(set(all_op_params))
+        try:
+            raw = _fetch_cycle_data(s_utc, e_utc, all_op_params, "1s")
+            for side, sig in _OPENING_SIGNALS.items():
+                cycles = _detect_opening_cycles(raw, sig)
+                all_cycles.extend(cycles)
+        except Exception as e:
+            pass  # 开口信号查询失败不阻塞堵口
+
+    if op_type in ("plugging", "all"):
+        all_pl_params = []
+        for side, sig in _PLUGGING_SIGNALS.items():
+            all_pl_params.extend(sig.values())
+        all_pl_params = list(set(all_pl_params))
+        try:
+            raw = _fetch_cycle_data(s_utc, e_utc, all_pl_params, "1s")
+            for side, sig in _PLUGGING_SIGNALS.items():
+                cycles = _detect_plugging_cycles(raw, sig)
+                all_cycles.extend(cycles)
+        except Exception as e:
+            pass
+
+    all_cycles.sort(key=lambda c: c["trigger_time"])
+    return jsonify({"cycles": all_cycles, "count": len(all_cycles)})
+
+
+# ── API: 周期指标提取 ──
+@app.route("/api/analysis/metrics")
+def api_analysis_metrics():
+    ws = request.args.get("window_start", "").strip()
+    we = request.args.get("window_end", "").strip()
+    machine = request.args.get("machine", "").strip()
+    op_type = request.args.get("type", "opening").strip()
+
+    if not ws or not we:
+        return jsonify({"error": "缺少时间窗口参数"}), 400
+
+    try:
+        w_start = datetime.fromisoformat(ws)
+        w_end = datetime.fromisoformat(we)
+    except ValueError:
+        return jsonify({"error": "时间格式错误，需要 ISO 8601"}), 400
+
+    s_utc = (w_start - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
+    e_utc = (w_end - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    metrics = {"machine": machine, "type": op_type, "window_start": ws, "window_end": we}
+
+    if op_type == "opening":
+        sig = None
+        for side, cfg in _OPENING_SIGNALS.items():
+            if cfg["name"] == machine:
+                sig = cfg
+                break
+        if not sig:
+            return jsonify({"error": f"未找到设备: {machine}"}), 404
+
+        params = [sig["push_pos"], sig["push_press"], sig["swing_pos"],
+                   sig["drill_press"], sig["impact_press"]]
+        raw = _fetch_cycle_data(s_utc, e_utc, params, "1s")
+
+        push_pos_pts = sorted(raw.get(sig["push_pos"], []), key=lambda x: x[0])
+        push_press_pts = sorted(raw.get(sig["push_press"], []), key=lambda x: x[0])
+        drill_press_pts = sorted(raw.get(sig["drill_press"], []), key=lambda x: x[0])
+        impact_press_pts = sorted(raw.get(sig["impact_press"], []), key=lambda x: x[0])
+
+        metrics["push_depth"] = round(push_pos_pts[-1][1] - push_pos_pts[0][1], 3) if len(push_pos_pts) >= 2 else 0
+        metrics["push_press_max"] = round(max(v for _, v in push_press_pts), 1) if push_press_pts else 0
+        metrics["push_press_mean"] = round(sum(v for _, v in push_press_pts) / len(push_press_pts), 1) if push_press_pts else 0
+        metrics["drill_press_mean"] = round(sum(v for _, v in drill_press_pts) / len(drill_press_pts), 1) if drill_press_pts else 0
+        metrics["drill_press_max"] = round(max(v for _, v in drill_press_pts), 1) if drill_press_pts else 0
+        metrics["impact_press_active"] = bool(impact_press_pts and any(v > 0.5 for _, v in impact_press_pts))
+        metrics["data_points"] = len(push_pos_pts)
+
+        # 简易钻透检测
+        breakthrough = False
+        if len(push_pos_pts) >= 4 and push_press_pts:
+            for i in range(3, len(push_pos_pts)):
+                dp = push_pos_pts[i][1] - push_pos_pts[i - 3][1]
+                pp_vals = [v for t, v in push_press_pts if abs((t - push_pos_pts[i][0]).total_seconds()) < 2]
+                pp_prev = [v for t, v in push_press_pts if abs((t - push_pos_pts[i - 3][0]).total_seconds()) < 2]
+                if pp_vals and pp_prev:
+                    dpp = (pp_vals[0] - pp_prev[0]) / pp_prev[0] if pp_prev[0] > 0 else 0
+                    if dp > 0.1 and dpp < -0.2:
+                        breakthrough = True
+                        break
+        metrics["breakthrough"] = breakthrough
+
+    else:
+        sig = None
+        for side, cfg in _PLUGGING_SIGNALS.items():
+            if cfg["name"] == machine:
+                sig = cfg
+                break
+        if not sig:
+            return jsonify({"error": f"未找到设备: {machine}"}), 404
+
+        params = [sig["mud_press"], sig["mud_qty"], sig["mud_pos"],
+                   sig["swing_pos"]]
+        raw = _fetch_cycle_data(s_utc, e_utc, params, "1s")
+
+        mud_press_pts = sorted(raw.get(sig["mud_press"], []), key=lambda x: x[0])
+        mud_qty_pts = sorted(raw.get(sig["mud_qty"], []), key=lambda x: x[0])
+
+        metrics["mud_press_max"] = round(max(v for _, v in mud_press_pts), 1) if mud_press_pts else 0
+        metrics["mud_press_mean"] = round(sum(v for _, v in mud_press_pts) / len(mud_press_pts), 1) if mud_press_pts else 0
+        metrics["mud_qty"] = round(mud_qty_pts[-1][1], 1) if mud_qty_pts else 0
+        metrics["data_points"] = len(mud_press_pts)
+
+        hold_seconds = 0
+        hold_consecutive = 0
+        for _, v in mud_press_pts:
+            if 18 <= v <= 22:
+                hold_consecutive += 1
+            else:
+                hold_consecutive = 0
+            if hold_consecutive > hold_seconds:
+                hold_seconds = hold_consecutive
+        metrics["hold_duration_s"] = hold_seconds
+        metrics["hold_ok"] = hold_seconds >= 60
+
+    return jsonify(metrics)
+
+
+# ── API: 导出分析结果 ──
+@app.route("/api/analysis/export")
+def api_analysis_export():
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    op_type = request.args.get("type", "all").strip()
+
+    if not start or not end:
+        return jsonify({"error": "缺少时间参数"}), 400
+
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return jsonify({"error": "时间格式错误"}), 400
+
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+
+    all_rows = []
+
+    all_op_params = []
+    for side, sig in _OPENING_SIGNALS.items():
+        all_op_params.extend(sig.values())
+    all_op_params = list(set(all_op_params))
+
+    all_pl_params = []
+    for side, sig in _PLUGGING_SIGNALS.items():
+        all_pl_params.extend(sig.values())
+    all_pl_params = list(set(all_pl_params))
+
+    try:
+        raw_op = _fetch_cycle_data(s_utc, e_utc, all_op_params, "1s")
+        for side, sig in _OPENING_SIGNALS.items():
+            for c in _detect_opening_cycles(raw_op, sig):
+                c["id"] = f"OP-{len(all_rows) + 1:03d}"
+                all_rows.append(c)
+    except Exception:
+        pass
+
+    try:
+        raw_pl = _fetch_cycle_data(s_utc, e_utc, all_pl_params, "1s")
+        for side, sig in _PLUGGING_SIGNALS.items():
+            for c in _detect_plugging_cycles(raw_pl, sig):
+                c["id"] = f"PL-{len(all_rows) + 1:03d}"
+                all_rows.append(c)
+    except Exception:
+        pass
+
+    all_rows.sort(key=lambda r: r.get("trigger_time", ""))
+
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    ws = wb.add_worksheet("作业分析")
+    headers = ["ID", "设备", "类型", "触发时间", "窗口开始", "窗口结束", "耗时(秒)", "结果",
+               "推进位移(m)", "推进压力峰值", "转钎压力峰值", "钻透",
+               "打泥压力峰值", "打泥量", "保压时长(秒)", "打泥完成", "保压完成"]
+    header_fmt = wb.add_format({"bold": True, "bg_color": "#1677ff", "font_color": "#fff", "border": 1})
+    for i, h in enumerate(headers):
+        ws.write(0, i, h, header_fmt)
+
+    for ri, row in enumerate(all_rows, 1):
+        ws.write(ri, 0, row.get("id", ""))
+        ws.write(ri, 1, row.get("machine", ""))
+        ws.write(ri, 2, "开口" if row.get("type") == "opening" else "堵口")
+        ws.write(ri, 3, row.get("trigger_time", ""))
+        ws.write(ri, 4, row.get("window_start", ""))
+        ws.write(ri, 5, row.get("window_end", ""))
+        ws.write(ri, 6, row.get("duration_s", 0))
+        ws.write(ri, 7, row.get("result", ""))
+        ws.write(ri, 8, row.get("push_pos_change", 0))
+        ws.write(ri, 9, row.get("push_press_peak", 0))
+        ws.write(ri, 10, row.get("drill_press_peak", 0))
+        ws.write(ri, 11, "是" if row.get("breakthrough") else "否")
+        ws.write(ri, 12, row.get("mud_press_peak", 0))
+        ws.write(ri, 13, row.get("mud_qty", 0))
+        ws.write(ri, 14, row.get("hold_duration_s", 0))
+        ws.write(ri, 15, "是" if row.get("mud_filled") else "否")
+        ws.write(ri, 16, "是" if row.get("hold_ok") else "否")
+
+    ws.autofit()
+    wb.close()
+    buf.seek(0)
+
+    timestamp_str = datetime.now(timezone(LOCAL_OFFSET)).strftime("%Y%m%d_%H%M%S")
+    return send_file(
+        buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name=f"DCS_作业分析_{timestamp_str}.xlsx"
+    )
+
+
+# ==============================================================
+# === 作业分析页面 ===
+# ==============================================================
+
+ANALYSIS_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>作业分析 — DCS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744 0%,#243356 50%,#2d3f66 100%);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.sidebar-header .version{font-size:10px;opacity:0.4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
+.sidebar-footer{margin-top:auto;padding:14px 20px;font-size:11px;border-top:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.35)}
+.sidebar-footer .dot{display:inline-block;width:6px;height:6px;background:#52c41a;border-radius:50%;margin-right:6px}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700}
+.header .badge{background:linear-gradient(135deg,#faad14,#d48806);color:#fff;font-size:10px;padding:2px 10px;border-radius:12px;font-weight:500}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.container{padding:24px 32px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:18px}
+.stat-card{background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 1px 8px rgba(0,0,0,0.04)}
+.stat-card .stat-label{font-size:11px;color:#94a3b8;font-weight:600}
+.stat-card .stat-value{font-size:24px;font-weight:700;color:#0f172a;margin-top:4px}
+.stat-card .stat-detail{font-size:11px;color:#94a3b8;margin-top:2px}
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 8px rgba(0,0,0,0.04);overflow:hidden;margin-bottom:16px}
+.card-header{padding:14px 20px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-body{padding:20px}
+.filter-bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
+.filter-group{display:flex;flex-direction:column;gap:4px}
+.filter-group label{font-size:11px;color:#64748b;font-weight:600}
+.filter-group input,.filter-group select{padding:7px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:13px;outline:none;background:#fff}
+.filter-group input:focus,.filter-group select:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.btn{padding:7px 18px;border:none;border-radius:7px;font-size:13px;cursor:pointer;font-weight:600;transition:all .2s}
+.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.btn-primary:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
+.btn-primary:disabled{background:#b0c4de;cursor:not-allowed}
+.btn-success{background:linear-gradient(135deg,#52c41a,#389e0d);color:#fff}
+.btn-success:hover{background:linear-gradient(135deg,#73d13d,#52c41a)}
+.btn-sm{padding:5px 12px;font-size:11px}
+.btn-outline{padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b;font-weight:500}
+.btn-outline:hover{border-color:#1677ff;color:#1677ff;background:#f0f5ff}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#f8fafc;font-weight:600;text-align:left;padding:8px 10px;color:#64748b;font-size:11px;border-bottom:1px solid #f1f5f9}
+td{padding:8px 10px;border-bottom:1px solid #f1f5f9}
+tr:hover{background:#f8fafc}
+.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.tag-ok{background:#ecfdf5;color:#059669}
+.tag-fail{background:#fef2f2;color:#dc2626}
+.tag-warn{background:#fffbeb;color:#d97706}
+.tag-info{background:#eff6ff;color:#2563eb}
+.loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.25);z-index:9999;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
+.loading-overlay.show{display:flex}
+.loading-box{background:#fff;padding:28px 40px;border-radius:12px;text-align:center}
+.spinner{width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:#1677ff;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.chart-area{min-height:400px;position:relative}
+.empty-state{text-align:center;padding:40px;color:#94a3b8}
+.empty-state h3{font-size:15px;margin-bottom:6px}
+.empty-state p{font-size:12px}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<div class="sidebar-header"><h2>DCS 分析平台</h2><div class="version">开口机 · 堵口机</div></div>
+<a class="nav-item" href="/">历史查询</a>
+<a class="nav-item" href="/realtime">实时监控</a>
+<a class="nav-item" href="/trend">趋势分析</a>
+<a class="nav-item active" href="/analysis">作业分析</a>
+<div class="sidebar-footer"><span class="dot"></span> InfluxDB 2.7</div>
+</div>
+
+<div class="main">
+<div class="header">
+<h1>炉前作业分析</h1>
+<span class="badge">GBDT-MPC-PID</span>
+<div class="nav-links">
+<a href="/">历史查询</a>
+<a href="/realtime">实时监控</a>
+<a href="/trend">趋势分析</a>
+<a href="/analysis" class="active">作业分析</a>
+</div>
+</div>
+
+<div class="container">
+
+<div class="filter-bar">
+<div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
+<div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
+<div class="filter-group"><label>作业类型</label>
+<select id="dType"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+</div>
+<button class="btn btn-primary" onclick="runAnalysis()">开始分析</button>
+<button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
+</div>
+
+<div class="stats-row" id="statsRow"></div>
+
+<div class="card">
+<div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
+<div class="card-body" style="overflow-x:auto">
+<div id="cycleEmpty" class="empty-state"><h3>尚未分析</h3><p>选择时间范围后点击「开始分析」</p></div>
+<table id="cycleTable" style="display:none">
+<thead><tr>
+<th>设备</th><th>类型</th><th>触发时间</th><th>窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
+</tr></thead>
+<tbody id="cycleBody"></tbody>
+</table>
+</div>
+</div>
+
+<div class="card" id="detailCard" style="display:none">
+<div class="card-header">作业详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span></div>
+<div class="card-body">
+<div id="detailMetrics" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
+<div class="chart-area"><canvas id="detailChart"></canvas></div>
+</div>
+</div>
+
+</div>
+</div>
+
+<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var globalCycles = [];
+var chartInst = null;
+var PARAM_CONFIG = {{ groups_json | safe }};
+
+function getLabelMap(){
+    var groups = PARAM_CONFIG.groups || [];
+    var labels = PARAM_CONFIG.labels || {};
+    return labels;
+}
+
+function initDates(){
+    var now = new Date();
+    var d1 = new Date(now.getTime() - 3*86400000);
+    document.getElementById('dEnd').value = now.toISOString().slice(0,16);
+    document.getElementById('dStart').value = d1.toISOString().slice(0,16);
+}
+initDates();
+
+function showLoading(msg){
+    document.getElementById('loadingMsg').textContent = msg || '正在查询...';
+    document.getElementById('loading').classList.add('show');
+}
+function hideLoading(){ document.getElementById('loading').classList.remove('show'); }
+
+function renderTag(result){
+    if(result=='success') return '<span class="tag tag-ok">成功</span>';
+    if(result=='fail') return '<span class="tag tag-fail">失败</span>';
+    if(result=='incomplete') return '<span class="tag tag-warn">未完成</span>';
+    if(result=='partial') return '<span class="tag tag-info">部分</span>';
+    return result;
+}
+
+function renderOpType(t){
+    return t=='opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
+}
+
+function runAnalysis(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    if(!start||!end){alert('请选择时间范围');return;}
+
+    showLoading('正在检测作业周期...');
+    var url = '/api/analysis/cycles?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(data){
+        if(data.error){alert(data.error);hideLoading();return;}
+        globalCycles = data.cycles || [];
+        renderCycles();
+        renderStats();
+        document.getElementById('btnExport').disabled = globalCycles.length === 0;
+        hideLoading();
+    }).catch(function(e){alert('查询失败: '+e);hideLoading();});
+}
+
+function renderStats(){
+    var openCycles = globalCycles.filter(function(c){return c.type=='opening';});
+    var plugCycles = globalCycles.filter(function(c){return c.type=='plugging';});
+    var openOk = openCycles.filter(function(c){return c.result=='success';}).length;
+    var plugOk = plugCycles.filter(function(c){return c.result=='success';}).length;
+
+    var html = '';
+    html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+'</div><div class="stat-detail">'+openOk+' 次成功</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+'</div><div class="stat-detail">'+plugOk+' 次成功</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">总作业数</div><div class="stat-value">'+globalCycles.length+'</div><div class="stat-detail">'+(openCycles.length+plugCycles.length)+' 次</div></div>';
+
+    var avgDur = 0;
+    if(globalCycles.length>0){
+        var total = globalCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);
+        avgDur = Math.round(total/globalCycles.length);
+    }
+    html += '<div class="stat-card"><div class="stat-label">平均耗时</div><div class="stat-value">'+avgDur+'s</div><div class="stat-detail">秒</div></div>';
+
+    document.getElementById('statsRow').innerHTML = html;
+    document.getElementById('cycleCount').textContent = '共 '+globalCycles.length+' 个周期';
+}
+
+function renderCycles(){
+    var tbody = document.getElementById('cycleBody');
+    if(globalCycles.length===0){
+        tbody.innerHTML = '';
+        document.getElementById('cycleTable').style.display = 'none';
+        document.getElementById('cycleEmpty').style.display = '';
+        return;
+    }
+    document.getElementById('cycleEmpty').style.display = 'none';
+    document.getElementById('cycleTable').style.display = '';
+
+    var html = '';
+    globalCycles.forEach(function(c,i){
+        var keyMetric = '';
+        if(c.type=='opening'){
+            keyMetric = '钻进:'+(c.push_pos_change||0).toFixed(3)+'m 推进峰:'+(c.push_press_peak||0).toFixed(0)+'MPa';
+        }else{
+            keyMetric = '打泥量:'+(c.mud_qty||0).toFixed(1)+'MPa 峰:'+(c.mud_press_peak||0).toFixed(0)+'MPa';
+        }
+        var winStart = (c.window_start||'').substring(11,19);
+        var winEnd = (c.window_end||'').substring(11,19);
+        var durMin = Math.floor((c.duration_s||0)/60);
+        var durSec = Math.round((c.duration_s||0)%60);
+        html += '<tr>';
+        html += '<td>'+c.machine+'</td>';
+        html += '<td>'+renderOpType(c.type)+'</td>';
+        html += '<td>'+(c.trigger_time||'').substring(11,19)+'</td>';
+        html += '<td>'+winStart+' ~ '+winEnd+'</td>';
+        html += '<td>'+durMin+'分'+durSec+'秒</td>';
+        html += '<td>'+keyMetric+'</td>';
+        html += '<td>'+renderTag(c.result)+'</td>';
+        html += '<td><button class="btn-outline" onclick="showDetail('+i+')">详情</button></td>';
+        html += '</tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function showDetail(idx){
+    var c = globalCycles[idx];
+    if(!c)return;
+    document.getElementById('detailCard').style.display = '';
+    document.getElementById('detailTitle').textContent = c.machine + ' / ' + (c.type=='opening'?'开口':'堵口');
+    document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
+
+    var labels = getLabelMap();
+
+    showLoading('正在提取指标...');
+    var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(metrics){
+        if(metrics.error){alert(metrics.error);hideLoading();return;}
+        renderMetrics(metrics);
+        loadDetailChart(c, metrics);
+        hideLoading();
+    }).catch(function(e){alert('指标提取失败: '+e);hideLoading();});
+}
+
+function renderMetrics(m){
+    var html = '';
+    if(m.type=='opening'){
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:20px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:20px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力均值</div><div class="stat-value" style="font-size:20px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:20px">'+(m.breakthrough?'<span style="color:#059669">是</span>':'<span style="color:#dc2626">否</span>')+'</div></div>';
+    }else{
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:20px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:20px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:20px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail">'+(m.hold_ok?'<span style="color:#059669">合格</span>':'<span style="color:#dc2626">不足</span>')+'</div></div>';
+    }
+    document.getElementById('detailMetrics').innerHTML = html;
+}
+
+function loadDetailChart(c, metrics){
+    var labels = getLabelMap();
+    var wStart = c.window_start;
+    var wEnd = c.window_end;
+
+    var sigs;
+    if(c.type=='opening'){
+        sigs = c.machine.indexOf('东')>=0 ?
+            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88'] :
+            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125'];
+    }else{
+        sigs = c.machine.indexOf('东')>=0 ?
+            ['LT_LQFC_138','LT_LQFC_179'] :
+            ['LT_LQFC_161','LT_LQFC_180'];
+    }
+
+    var url = '/api/trend?params='+sigs.join(',')+'&start='+encodeURIComponent(wStart.substring(0,16))+'&end='+encodeURIComponent(wEnd.substring(0,16));
+    fetch(url+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
+        if(data.error){return;}
+        var ctx = document.getElementById('detailChart').getContext('2d');
+        if(chartInst)chartInst.destroy();
+
+        var datasets = [];
+        var colors = ['#1677ff','#52c41a','#faad14','#ff4d4f'];
+
+        data.series.forEach(function(s,i){
+            var pts = s.data || [];
+            var times = pts.map(function(p){return new Date(p.time)});
+            var values = pts.map(function(p){return p.value});
+
+            var isPos = (s.param||'').indexOf('67')>0 || (s.param||'').indexOf('104')>0 || (s.param||'').indexOf('160')>0;
+            var yAxisID = isPos ? 'y-pos' : 'y-press';
+
+            datasets.push({
+                label: labels[s.param] || s.param,
+                data: values,
+                borderColor: colors[i%colors.length],
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.1,
+                yAxisID: yAxisID,
+                fill: false
+            });
+        });
+
+        chartInst = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.series.length>0 ? (data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN')}) : [],
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {mode:'nearest',intersect:false},
+                plugins: {
+                    legend: {position:'top',labels:{font:{size:11},usePointStyle:true,padding:16}},
+                    tooltip: {mode:'index',intersect:false}
+                },
+                scales: {
+                    x: {
+                        ticks: {font:{size:10},maxTicksLimit:15},
+                        grid: {color:'#f1f5f9'}
+                    },
+                    'y-press': {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {display:true,text:'压力 (MPa)',font:{size:10}},
+                        ticks: {font:{size:10}},
+                        grid: {color:'#f1f5f9'}
+                    },
+                    'y-pos': {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {display:true,text:'位置 (mm)',font:{size:10}},
+                        ticks: {font:{size:10}},
+                        grid: {display:false}
+                    }
+                }
+            }
+        });
+
+        document.getElementById('detailChart').parentElement.style.height = '400px';
+    }).catch(function(){});
+}
+
+function exportResult(){
+    if(globalCycles.length===0)return;
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    var url = '/api/analysis/export?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
+    window.location.href = url;
+}
+</script>
+</body>
+</html>"""
+
+
+@app.route("/analysis")
+@login_required
+def analysis():
+    html = ANALYSIS_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG))
+    html = html.replace("{{ app_token }}", APP_TOKEN or "")
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
 # === 系统配置页面 ===
 SETTINGS_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3111,6 +4069,7 @@ if __name__ == "__main__":
     print(f"  浏览器打开: http://localhost:{FLASK_PORT}")
     print(f"  实时监控:   http://localhost:{FLASK_PORT}/realtime")
     print(f"  趋势分析:   http://localhost:{FLASK_PORT}/trend")
+    print(f"  作业分析:   http://localhost:{FLASK_PORT}/analysis")
     print(f"  API 认证:   {'已启用 (APP_TOKEN)' if APP_TOKEN else '[WARN] 未启用 (仅内网安全)'}")
     print()
 
