@@ -353,6 +353,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .analysis-card .param-tag.pressure { background: #eff6ff; color: #2563eb; }
 .analysis-card .param-tag.timing { background: #f5f3ff; color: #7c3aed; }
 
+/* === 响应式 */
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
 /* 响应式 */
 @media (max-width: 768px) {
     .sidebar { width: 60px; min-width: 60px; }
@@ -408,6 +413,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
         <h1 id="pageTitle">东开口机</h1>
         <span class="badge">InfluxDB</span>
         <span class="breadcrumb" id="pageDesc">37个信号参数 · 7大类别</span>
+        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
         <div class="nav-links">
             <a href="/" class="active">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -544,10 +550,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
 <script>
+// === 登录检查 ===
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
+
 // === 初始化 ===
 const GROUPS = {{ groups_json | safe }};
 const LABELS = {{ labels_json | safe }};
 const API_TOKEN = "{{ app_token }}";
+checkLogin();
 let currentGroup = 'east_opener';
 let currentData = [];
 let table = null;
@@ -1688,6 +1699,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 @keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
 .loading-bar.hide { display: none; }
 
+/* === 响应式 */
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
 /* 响应式 */
 @media (max-width: 768px) {
     .sidebar { width: 60px; min-width: 60px; }
@@ -1721,6 +1737,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 <div class="main">
     <div class="header">
         <h1>实时数据监控</h1>
+        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime" class="active">实时监控</a>
@@ -1770,9 +1787,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 </div>
 
 <script>
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
 const GROUPS = {{ groups_json | safe }};
 const LABELS = {{ labels_json | safe }};
 const API_TOKEN = "{{ app_token }}";
+checkLogin();
 const CAT_NAMES = {
     remote_command: '遥控器指令', control_valve: '控制比例阀',
     position: '位置状态', pressure: '压力状态',
@@ -2128,6 +2148,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
     .chart-wrap { margin: 8px 12px 12px; }
     .toolbar { flex-direction: column; align-items: flex-start; }
 }
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
 </style>
 </head>
 <body>
@@ -2145,6 +2169,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 <div class="main">
     <div class="header">
         <h1>趋势分析</h1>
+        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -2191,9 +2216,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 </div>
 
 <script>
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username)document.getElementById('userName').textContent=d.username;}).catch(function(){window.location.href='/';});}
+function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
 const GROUPS = {{ groups_json | safe }};
 const LABELS = {{ labels_json | safe }};
 const API_TOKEN = "{{ app_token }}";
+checkLogin();
 const COLORS = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#2f54eb','#a0d911','#f5222d','#1890ff','#fa541c','#9254de','#597ef7'];
 let selectedParams = [];
 let uplot = null;
