@@ -221,7 +221,10 @@ def _check_api_auth():
     return None
 
 # === 加载参数分组 ===
-GROUPS_FILE = _BASE_DIR / "param_groups.json"
+# PyInstaller: --add-data "dcs_viewer/param_groups.json;dcs_viewer" → {_MEIPASS}/dcs_viewer/param_groups.json
+GROUPS_FILE = _BASE_DIR / "dcs_viewer" / "param_groups.json"
+if not GROUPS_FILE.exists():
+    GROUPS_FILE = _BASE_DIR / "param_groups.json"
 if not GROUPS_FILE.exists():
     GROUPS_FILE = _EXE_DIR / "param_groups.json"
 with open(GROUPS_FILE, "r", encoding="utf-8") as f:
