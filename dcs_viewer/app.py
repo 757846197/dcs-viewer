@@ -3123,4 +3123,5 @@ if __name__ == "__main__":
             _time.sleep(1.5)
             webbrowser.open(f"http://localhost:{FLASK_PORT}")
         threading.Thread(target=_open_browser, daemon=True).start()
-    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False)
+    from waitress import serve
+    serve(app, host=FLASK_HOST, port=FLASK_PORT, threads=8)
