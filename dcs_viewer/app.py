@@ -4097,6 +4097,7 @@ function exportResult(){
 </body>
 </html>
 """
+@app.route("/analysis")
 @login_required
 def analysis():
     html = ANALYSIS_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG))
