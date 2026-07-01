@@ -3616,7 +3616,6 @@ ANALYSIS_HTML = r"""<!DOCTYPE html>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
 
-/* === 左侧导航 === */
 .sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
 .sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
 .sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -3624,14 +3623,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
 .nav-section { padding: 12px 0; }
 .nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
-.nav-item { display: flex; align-items: center; gap: 10px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
 .nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
 .nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
-.nav-item .count { margin-left: auto; background: rgba(255,255,255,0.1); font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.nav-item .badge-dim { margin-left: auto; font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 500; }
+.nav-item .badge-dim.swing { background: rgba(22,119,255,0.2); color: #91caff; }
+.nav-item .badge-dim.push { background: rgba(82,196,26,0.2); color: #b7eb8f; }
+.nav-item .badge-dim.mud { background: rgba(250,173,20,0.2); color: #ffe58f; }
 .sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
 .sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
 
-/* === 主内容区 === */
 .main { margin-left: 220px; flex: 1; min-height: 100vh; }
 .header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
 .header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
@@ -3643,19 +3644,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
 .container { padding: 24px 32px; }
 
-/* === 统计卡片 === */
 .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
 .stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
 .stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
 .stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
 .stat-card .stat-detail { font-size: 11px; color: #94a3b8; margin-top: 6px; }
 
-/* === 卡片 === */
 .card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
 .card-body { padding: 24px; }
 .card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
 
-/* === 筛选栏 === */
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .filter-group { display: flex; flex-direction: column; gap: 5px; }
 .filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
@@ -3669,49 +3667,43 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
 .btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
 .btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
-.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; }
+.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; text-decoration: none; }
 .btn-ghost:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
 
-/* === 表格 === */
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th { background: #f8fafc; font-weight: 600; text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; border-bottom: 1px solid #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; }
 td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
 tr:hover { background: #f8fafc; }
 
-/* === 标签 === */
-.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; display: inline-block; }
 .tag-ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 .tag-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 .tag-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
 .tag-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
 
-/* === 加载 === */
 .loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
 .loading-overlay.show { display: flex; }
 .loading-box { background: #fff; padding: 32px 48px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
 .spinner { width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s cubic-bezier(0.4,0,0.2,1) infinite; margin: 0 auto 16px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* === 图表 === */
 .chart-area { min-height: 400px; position: relative; }
-
-/* === 空状态 === */
 .empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
 .empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
 .empty-state p { font-size: 12px; }
 
-/* === 用户区域 === */
+.alert { padding: 12px 20px; border-radius: 12px; margin-bottom: 16px; font-size: 13px; display: none; }
+.alert-error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
+.alert-info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
+
 .user-area { display: flex; align-items: center; gap: 10px; }
 .user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
 .btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
 .btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
 
-/* === 响应式 === */
 @media (max-width: 768px) {
     .sidebar { width: 60px; min-width: 60px; }
-    .sidebar .nav-item span { display: none; }
-    .sidebar .nav-section-title { display: none; }
-    .sidebar .count { display: none; }
+    .sidebar .nav-item span, .sidebar .nav-section-title, .sidebar .badge-dim { display: none; }
     .main { margin-left: 60px; }
     .filter-bar { flex-direction: column; }
 }
@@ -3719,11 +3711,10 @@ tr:hover { background: #f8fafc; }
 </head>
 <body>
 
-<!-- === 左侧导航 === -->
 <div class="sidebar">
     <div class="sidebar-header">
         <h2>DCS 分析平台</h2>
-        <div class="version">开口机 · 堵口机</div>
+        <div class="version">GBDT-MPC-PID 三级架构</div>
     </div>
 
     <div class="nav-section">
@@ -3735,11 +3726,33 @@ tr:hover { background: #f8fafc; }
     </div>
 
     <div class="nav-section">
-        <div class="nav-section-title">设备分组</div>
-        <a class="nav-item" href="/">东开口机 <span class="count">19</span></a>
-        <a class="nav-item" href="/">西开口机 <span class="count">19</span></a>
-        <a class="nav-item" href="/">东堵口机 <span class="count">18</span></a>
-        <a class="nav-item" href="/">西堵口机 <span class="count">18</span></a>
+        <div class="nav-section-title">分析功能</div>
+        <a class="nav-item" href="javascript:switchOpType('opening')" id="navOpening">开口作业分析</a>
+        <a class="nav-item" href="javascript:switchOpType('plugging')" id="navPlugging">堵口作业分析</a>
+        <a class="nav-item" href="javascript:switchOpType('all')" id="navAll">全部作业</a>
+    </div>
+
+    <div class="nav-section" id="dimSectionOpening">
+        <div class="nav-section-title">信号维度 — 开口</div>
+        <a class="nav-item" href="javascript:filterDim('push')">推进系统 <span class="badge-dim push">位移/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('swing')">回转系统 <span class="badge-dim swing">角度/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('drill')">转钎系统</a>
+        <a class="nav-item" href="javascript:filterDim('impact')">冲击系统</a>
+        <a class="nav-item" href="javascript:filterDim('tilt')">倾动系统</a>
+        <a class="nav-item" href="javascript:filterDim('hydraulic')">液压站</a>
+    </div>
+
+    <div class="nav-section" id="dimSectionPlugging" style="display:none">
+        <div class="nav-section-title">信号维度 — 堵口</div>
+        <a class="nav-item" href="javascript:filterDim('mud')">打泥系统 <span class="badge-dim mud">量/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('cannon')">转炮/退炮</a>
+        <a class="nav-item" href="javascript:filterDim('retreat')">退泥回路</a>
+        <a class="nav-item" href="javascript:filterDim('hydraulic_p')">液压站</a>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">数据操作</div>
+        <a class="nav-item" href="javascript:exportResult()">导出 Excel</a>
     </div>
 
     <div class="sidebar-footer">
@@ -3747,17 +3760,13 @@ tr:hover { background: #f8fafc; }
     </div>
 </div>
 
-<!-- === 主内容 === -->
 <div class="main">
 
     <div class="header">
         <h1>炉前作业分析</h1>
         <span class="badge">GBDT-MPC-PID</span>
-        <span class="breadcrumb">周期识别 · 指标提取 · 数据标注</span>
-        <div class="user-area" id="userArea">
-            <span class="user-name" id="userName">admin</span>
-            <button class="btn-logout" onclick="doLogout()">退出</button>
-        </div>
+        <span class="breadcrumb" id="pageDesc">周期识别 · 阶段标注 · 指标提取</span>
+        <div class="user-area"><span class="user-name">admin</span><button class="btn-logout" onclick="doLogout()">退出</button></div>
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -3768,13 +3777,18 @@ tr:hover { background: #f8fafc; }
 
     <div class="container">
 
+        <div id="alertBox" class="alert"></div>
+
         <div class="filter-bar">
             <div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
             <div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
             <div class="filter-group"><label>作业类型</label>
-                <select id="dType"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+                <select id="dType" onchange="switchOpType(this.value)"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
             </div>
-            <button class="btn btn-primary" onclick="runAnalysis()">开始分析</button>
+            <div class="filter-group"><label>设备</label>
+                <select id="dMachine"><option value="all">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
             <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
         </div>
 
@@ -3783,10 +3797,10 @@ tr:hover { background: #f8fafc; }
         <div class="card">
             <div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
             <div class="card-body" style="overflow-x:auto">
-                <div id="cycleEmpty" class="empty-state"><h3>尚未分析</h3><p>选择时间范围后点击「开始分析」，自动识别开口和堵口作业周期</p></div>
+                <div id="cycleEmpty" class="empty-state"><h3>选择时间范围</h3><p>点击「开始分析」自动识别开口和堵口作业周期，按GBDT-MPC-PID协议分类</p></div>
                 <table id="cycleTable" style="display:none">
                     <thead><tr>
-                        <th>设备</th><th>类型</th><th>触发时间</th><th>窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
+                        <th>设备</th><th>类型</th><th>触发时间</th><th>作业窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
                     </tr></thead>
                     <tbody id="cycleBody"></tbody>
                 </table>
@@ -3811,6 +3825,8 @@ var APP_TOKEN = "{{ app_token }}";
 var globalCycles = [];
 var chartInst = null;
 var PARAM_CONFIG = {{ groups_json | safe }};
+var _currentDimFilter = null;
+var _currentOpType = 'all';
 
 function getLabelMap(){
     var labels = {};
@@ -3828,19 +3844,47 @@ function initDates(){
     document.getElementById('dStart').value = d1.toISOString().slice(0,16);
 }
 initDates();
-checkLogin();
 
 function checkLogin(){
     fetch('/api/user?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
         if(!d.logged_in){window.location.href='/';}
         if(d.username)document.getElementById('userName').textContent=d.username;
-    }).catch(function(){window.location.href='/';});
+    }).catch(function(e){console.log('Auth check failed, redirecting:', e);window.location.href='/';});
 }
+checkLogin();
 
 function doLogout(){
     fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
         window.location.href='/';
     });
+}
+
+function switchOpType(t){
+    _currentOpType = t;
+    document.getElementById('dType').value = t;
+    document.getElementById('navOpening').classList.toggle('active', t==='opening');
+    document.getElementById('navPlugging').classList.toggle('active', t==='plugging');
+    document.getElementById('navAll').classList.toggle('active', t==='all');
+    document.getElementById('dimSectionOpening').style.display = (t==='plugging')?'none':'';
+    document.getElementById('dimSectionPlugging').style.display = (t==='opening'||t==='all')?'none':'';
+    document.getElementById('pageDesc').textContent = t==='opening'?'回转·倾动·转钎·冲击·推进·液压站':t==='plugging'?'转炮·打泥·保压·退炮·液压站':'周期识别 · 阶段标注 · 指标提取';
+}
+
+function filterDim(dim){
+    _currentDimFilter = dim;
+    var items = document.querySelectorAll('.nav-section .nav-item');
+    items.forEach(function(it){it.classList.remove('active');});
+    if(_currentOpType==='plugging')document.getElementById('navPlugging').classList.add('active');
+    else if(_currentOpType==='opening')document.getElementById('navOpening').classList.add('active');
+    else document.getElementById('navAll').classList.add('active');
+    if(globalCycles.length>0)renderCycles();
+}
+
+function showAlert(msg, cls){
+    var el = document.getElementById('alertBox');
+    el.textContent = msg;
+    el.className = 'alert alert-'+cls;
+    setTimeout(function(){el.className='alert';el.textContent='';}, 6000);
 }
 
 function showLoading(msg){
@@ -3854,7 +3898,7 @@ function renderTag(result){
     if(result=='fail') return '<span class="tag tag-fail">失败</span>';
     if(result=='incomplete') return '<span class="tag tag-warn">未完成</span>';
     if(result=='partial') return '<span class="tag tag-info">未完整</span>';
-    return result;
+    return result||'--';
 }
 
 function renderOpType(t){
@@ -3865,24 +3909,53 @@ function runAnalysis(){
     var start = document.getElementById('dStart').value;
     var end = document.getElementById('dEnd').value;
     var opType = document.getElementById('dType').value;
-    if(!start||!end){alert('请选择时间范围');return;}
+    var machine = document.getElementById('dMachine').value;
 
+    if(!start||!end){
+        showAlert('请选择开始和结束时间', 'error');
+        return;
+    }
+    if(!APP_TOKEN){
+        showAlert('系统配置错误：缺少 API Token，请联系管理员', 'error');
+        return;
+    }
+
+    document.getElementById('btnAnalyze').disabled = true;
     showLoading('正在检测作业周期...');
+    showAlert('正在查询 InfluxDB，请稍候...', 'info');
+
     var url = '/api/analysis/cycles?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){return r.json()}).then(function(data){
-        if(data.error){alert(data.error);hideLoading();return;}
+    fetch(url).then(function(r){
+        if(!r.ok) throw new Error('服务器返回 HTTP '+r.status);
+        return r.json();
+    }).then(function(data){
+        if(data.error){
+            showAlert(data.error, 'error');
+            hideLoading();
+            document.getElementById('btnAnalyze').disabled = false;
+            return;
+        }
         globalCycles = data.cycles || [];
+        if(machine!=='all'){
+            globalCycles = globalCycles.filter(function(c){return c.machine===machine;});
+        }
         renderCycles();
         renderStats();
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
+        document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
-    }).catch(function(e){alert('查询失败: '+e);hideLoading();});
+        showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+    }).catch(function(e){
+        showAlert('分析失败: '+e.message, 'error');
+        hideLoading();
+        document.getElementById('btnAnalyze').disabled = false;
+    });
 }
 
 function renderStats(){
     var openCycles = globalCycles.filter(function(c){return c.type=='opening';});
     var plugCycles = globalCycles.filter(function(c){return c.type=='plugging';});
-    var openOk = openCycles.filter(function(c){return c.result=='success';}).length;
+    var openOk = openCycles.filter(function(c){return c.result=='success'||c.breakthrough;}).length;
     var plugOk = plugCycles.filter(function(c){return c.result=='success';}).length;
 
     var avgDur = 0;
@@ -3896,7 +3969,7 @@ function renderStats(){
     var html = '';
     html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+'</div><div class="stat-detail">'+openOk+' 次钻透成功</div></div>';
     html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+'</div><div class="stat-detail">'+plugOk+' 次完整完成</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">作业总数</div><div class="stat-value">'+globalCycles.length+'</div><div class="stat-detail">开口+堵口</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">作业总数</div><div class="stat-value">'+globalCycles.length+'</div><div class="stat-detail">开口 + 堵口</div></div>';
     html += '<div class="stat-card"><div class="stat-label">平均耗时</div><div class="stat-value">'+durMin+'m'+durSec+'s</div><div class="stat-detail">每炉次</div></div>';
     document.getElementById('statsRow').innerHTML = html;
     document.getElementById('cycleCount').textContent = '共 '+globalCycles.length+' 个周期';
@@ -3904,22 +3977,29 @@ function renderStats(){
 
 function renderCycles(){
     var tbody = document.getElementById('cycleBody');
-    if(globalCycles.length===0){
+    var filtered = globalCycles;
+    if(_currentDimFilter){
+        filtered = globalCycles;
+    }
+    if(filtered.length===0){
         tbody.innerHTML = '';
         document.getElementById('cycleTable').style.display = 'none';
         document.getElementById('cycleEmpty').style.display = '';
+        document.getElementById('cycleEmpty').innerHTML = '<h3>'+(globalCycles.length===0?'未检测到作业周期':'当前筛选无匹配周期')+'</h3><p>'+(globalCycles.length===0?'选择时间范围后点击「开始分析」':'尝试调整筛选条件')+'</p>';
         return;
     }
     document.getElementById('cycleEmpty').style.display = 'none';
     document.getElementById('cycleTable').style.display = '';
 
     var html = '';
-    globalCycles.forEach(function(c,i){
+    filtered.forEach(function(c,i){
         var keyMetric = '';
         if(c.type=='opening'){
             keyMetric = '钻进'+(c.push_pos_change||0).toFixed(3)+'m | 推进峰'+(c.push_press_peak||0).toFixed(0)+'MPa';
+            if(c.breakthrough)keyMetric += ' | 已钻透';
         }else{
             keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
+            if(c.hold_ok)keyMetric += ' | 保压OK';
         }
         var winStart = (c.window_start||'').substring(11,19);
         var winEnd = (c.window_end||'').substring(11,19);
@@ -3933,7 +4013,7 @@ function renderCycles(){
         html += '<td>'+durMin+'分'+durSec+'秒</td>';
         html += '<td style="font-size:11px">'+keyMetric+'</td>';
         html += '<td>'+renderTag(c.result)+'</td>';
-        html += '<td><button class="btn-ghost" onclick="showDetail('+i+')">详情</button></td>';
+        html += '<td><button class="btn-ghost" onclick="showDetail('+globalCycles.indexOf(c)+')">详情</button></td>';
         html += '</tr>';
     });
     tbody.innerHTML = html;
@@ -3943,30 +4023,31 @@ function showDetail(idx){
     var c = globalCycles[idx];
     if(!c)return;
     document.getElementById('detailCard').style.display = '';
-    document.getElementById('detailTitle').textContent = c.machine + ' / ' + (c.type=='opening'?'开口':'堵口');
+    document.getElementById('detailTitle').textContent = c.machine + ' / ' + ((c.type=='opening')?'开口':c.type=='plugging'?'堵口':c.type);
     document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
 
     showLoading('正在提取指标...');
     var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
     fetch(url).then(function(r){return r.json()}).then(function(metrics){
-        if(metrics.error){alert(metrics.error);hideLoading();return;}
+        if(metrics.error){showAlert(metrics.error,'error');hideLoading();return;}
         renderMetrics(metrics);
         loadDetailChart(c, metrics);
         hideLoading();
-    }).catch(function(e){alert('指标提取失败: '+e);hideLoading();});
+    }).catch(function(e){showAlert('指标提取失败: '+e.message,'error');hideLoading();});
 }
 
 function renderMetrics(m){
     var html = '';
     if(m.type=='opening'){
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">冲击状态</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
     }else{
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail" style="color:#64748b">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格':'保压不足')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格 (≥60s)':'保压不足 (<60s)')+'</div></div>';
     }
     document.getElementById('detailMetrics').innerHTML = html;
 }
@@ -3975,92 +4056,37 @@ function loadDetailChart(c, metrics){
     var labels = getLabelMap();
     var wStart = c.window_start;
     var wEnd = c.window_end;
-
     var sigs;
     if(c.type=='opening'){
         sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88'] :
-            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125'];
+            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88','LT_LQFC_63'] :
+            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125','LT_LQFC_100'];
     }else{
         sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_138','LT_LQFC_179'] :
-            ['LT_LQFC_161','LT_LQFC_180'];
+            ['LT_LQFC_138','LT_LQFC_179','LT_LQFC_135'] :
+            ['LT_LQFC_161','LT_LQFC_180','LT_LQFC_158'];
     }
-
     var url = '/api/trend?params='+sigs.join(',')+'&start='+encodeURIComponent(wStart.substring(0,16))+'&end='+encodeURIComponent(wEnd.substring(0,16));
     fetch(url+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
         if(data.error){return;}
         var ctx = document.getElementById('detailChart').getContext('2d');
         if(chartInst)chartInst.destroy();
-
         var datasets = [];
-        var colors = ['#1677ff','#52c41a','#faad14','#ff4d4f'];
-
+        var colors = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1'];
         data.series.forEach(function(s,i){
             var pts = s.data || [];
             var values = pts.map(function(p){return p.value});
-
-            var isPos = (s.param||'').indexOf('67')>0 || (s.param||'').indexOf('104')>0 || (s.param||'').indexOf('160')>0;
+            var isPos = (s.param||'').indexOf('67')>0||(s.param||'').indexOf('104')>0||(s.param||'').indexOf('160')>0||(s.param||'').indexOf('63')>0||(s.param||'').indexOf('100')>0||(s.param||'').indexOf('135')>0||(s.param||'').indexOf('158')>0;
             var yAxisID = isPos ? 'y-pos' : 'y-press';
-
-            datasets.push({
-                label: labels[s.param] || s.param,
-                data: values,
-                borderColor: colors[i%colors.length],
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.1,
-                yAxisID: yAxisID,
-                fill: false
-            });
+            datasets.push({label:labels[s.param]||s.param,data:values,borderColor:colors[i%colors.length],backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0.1,yAxisID:yAxisID,fill:false});
         });
-
-        chartInst = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: data.series.length>0 ? (data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}) : [],
-                datasets: datasets
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {mode:'nearest',intersect:false},
-                plugins: {
-                    legend: {position:'top',labels:{font:{size:11},usePointStyle:true,padding:16}},
-                    tooltip: {mode:'index',intersect:false}
-                },
-                scales: {
-                    x: {
-                        ticks: {font:{size:10},maxTicksLimit:15},
-                        grid: {color:'#f1f5f9'}
-                    },
-                    'y-press': {
-                        type: 'linear',
-                        display: true,
-                        position: 'left',
-                        title: {display:true,text:'压力 (MPa)',font:{size:10}},
-                        ticks: {font:{size:10}},
-                        grid: {color:'#f1f5f9'}
-                    },
-                    'y-pos': {
-                        type: 'linear',
-                        display: true,
-                        position: 'right',
-                        title: {display:true,text:'位置 (mm)',font:{size:10}},
-                        ticks: {font:{size:10}},
-                        grid: {display:false}
-                    }
-                }
-            }
-        });
-
+        chartInst = new Chart(ctx,{type:'line',data:{labels:data.series.length>0?(data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}):[],datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{position:'top',labels:{font:{size:11},usePointStyle:true,padding:16}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{font:{size:10},maxTicksLimit:15},grid:{color:'#f1f5f9'}},'y-press':{type:'linear',display:true,position:'left',title:{display:true,text:'压力 (MPa)',font:{size:10}},ticks:{font:{size:10}},grid:{color:'#f1f5f9'}},'y-pos':{type:'linear',display:true,position:'right',title:{display:true,text:'位置/角度',font:{size:10}},ticks:{font:{size:10}},grid:{display:false}}}}});
         document.getElementById('detailChart').parentElement.style.height = '400px';
     }).catch(function(){});
 }
 
 function exportResult(){
-    if(globalCycles.length===0)return;
+    if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
     var start = document.getElementById('dStart').value;
     var end = document.getElementById('dEnd').value;
     var opType = document.getElementById('dType').value;
@@ -4069,10 +4095,8 @@ function exportResult(){
 }
 </script>
 </body>
-</html>"""
-
-
-@app.route("/analysis")
+</html>
+"""
 @login_required
 def analysis():
     html = ANALYSIS_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG))
