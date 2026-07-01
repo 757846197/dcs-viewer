@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import time as _time
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3112,4 +3113,14 @@ if __name__ == "__main__":
     print(f"  趋势分析:   http://localhost:{FLASK_PORT}/trend")
     print(f"  API 认证:   {'已启用 (APP_TOKEN)' if APP_TOKEN else '[WARN] 未启用 (仅内网安全)'}")
     print()
+
+    # 自动打开浏览器
+    if not getattr(sys, 'frozen', False):
+        webbrowser.open(f"http://localhost:{FLASK_PORT}")
+    else:
+        # PyInstaller 环境，等待 Flask 完全启动后再打开
+        def _open_browser():
+            _time.sleep(1.5)
+            webbrowser.open(f"http://localhost:{FLASK_PORT}")
+        threading.Thread(target=_open_browser, daemon=True).start()
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False)
