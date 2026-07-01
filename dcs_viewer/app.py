@@ -952,16 +952,19 @@ async function saveSettings(){
 
 @app.route("/")
 def index():
-    if session.get("logged_in"):
-        return redirect("/trend")
-    return render_template_string(LOGIN_HTML)
+    if not session.get("logged_in"):
+        return render_template_string(LOGIN_HTML)
+    html = INDEX_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
+    html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
+    html = html.replace("{{ app_token }}", APP_TOKEN or "")
+    return render_template_string(html)
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
     data = request.get_json(silent=True) or {}
     if data.get("username") == "admin" and data.get("password") == "admin123":
         session["logged_in"] = True
-        return jsonify({"ok": True, "redirect": "/trend"})
+    return jsonify({"ok": True, "redirect": "/"})
     return jsonify({"ok": False, "error": "账号或密码错误"})
 
 
