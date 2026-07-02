@@ -4988,7 +4988,7 @@ function renderStateTimeline(states){
     content.innerHTML=html;
 }
 
-function exportResult(){function exportResult(){
+function exportResult(){
     if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
     var start = document.getElementById('dStart').value;
     var end = document.getElementById('dEnd').value;
