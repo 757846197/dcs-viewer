@@ -3728,6 +3728,7 @@ tr:hover { background: #f8fafc; }
             </div>
             <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
             <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
+            <span id="queryTimeRange" style="margin-left:auto;font-size:12px;color:#64748b;white-space:nowrap">--</span>
         </div>
 
         <div class="stats-row" id="statsRow"></div>
@@ -3807,11 +3808,16 @@ function getLabelMap(){
     return labels;
 }
 
+function fmtLocalDT(d){
+    var p = function(n){return String(n).padStart(2,'0');};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
 function initDates(){
     var now = new Date();
     var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    document.getElementById('dStart').value = today.toISOString().slice(0,16);
-    document.getElementById('dEnd').value = now.toISOString().slice(0,16);
+    document.getElementById('dStart').value = fmtLocalDT(today);
+    document.getElementById('dEnd').value = fmtLocalDT(now);
+    document.getElementById('queryTimeRange').textContent = '--';
 }
 initDates();
 
@@ -3935,6 +3941,7 @@ function runAnalysis(){
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
         document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
+        document.getElementById('queryTimeRange').textContent = '查询: '+start.replace('T',' ')+' ~ '+end.replace('T',' ');
         showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
     }).catch(function(e){
         showAlert('分析失败: '+e.message, 'error');
