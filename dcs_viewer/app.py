@@ -592,13 +592,13 @@ let currentGroup = 'east_opener';
 let currentData = [];
 let table = null;
 
-// 日期初始化 - 默认最近1小时
+// 日期初始化 - 默认当天0点 ~ 当前时刻
 const now = new Date();
-const oneHourAgo = new Date(now - 3600000);
+const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 const pad2 = n => String(n).padStart(2,'0');
 const fmtLocal = d => d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
 document.getElementById('endTime').value = fmtLocal(now);
-document.getElementById('startTime').value = fmtLocal(oneHourAgo);
+document.getElementById('startTime').value = fmtLocal(todayStart);
 
 // 初始化分析面板和统计
 updateAnalysisPanel();
@@ -2354,11 +2354,11 @@ function tooltipPlugin() {
 // === 初始化时间 ===
 function initTime() {
     const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const pad = n => String(n).padStart(2,'0');
     const fmt = d => d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
     document.getElementById('endTime').value = fmt(now);
-    now.setHours(now.getHours() - 2);
-    document.getElementById('startTime').value = fmt(now);
+    document.getElementById('startTime').value = fmt(todayStart);
 }
 
 // === 构建树 ===
