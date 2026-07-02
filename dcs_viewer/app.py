@@ -282,6 +282,28 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .state-block.fault { background:#fee2e2;color:#991b1b }
 .state-block.maintenance { background:#fef3c7;color:#92400e }
 .state-block.offline { background:#f1f5f9;color:#64748b }
+.model-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700 }
+.model-badge.A { background:#dcfce7;color:#166534 }
+.model-badge.B { background:#dbeafe;color:#1d4ed8 }
+.model-badge.C { background:#fef9c3;color:#854d0e }
+.model-badge.D { background:#fee2e2;color:#991b1b }
+.phase-bar { display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px;gap:1px }
+.phase-seg { height:100% }
+.phase-seg.approach { background:#94a3b8 }
+.phase-seg.initial_drill { background:#60a5fa }
+.phase-seg.steady_drill { background:#3b82f6 }
+.phase-seg.breakthrough { background:#f59e0b }
+.phase-seg.retract { background:#10b981 }
+.phase-seg.mud_fill { background:#a78bfa }
+.phase-seg.pressure_hold { background:#8b5cf6 }
+.phase-seg.unknown { background:#e2e8f0 }
+.model-panel { background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden }
+.model-panel-header { padding:14px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;color:#0f172a }
+.rec-card { background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:12px 16px }
+.rec-card .rec-title { font-size:11px;color:#0369a1;margin-bottom:4px }
+.rec-card .rec-value { font-size:24px;font-weight:700;color:#0c4a6e }
+.rec-card .rec-unit { font-size:11px;color:#0369a1;font-weight:400 }
+.rec-card .rec-reason { font-size:10px;color:#64748b;margin-top:4px }
 .state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
 .card-header .dot-indicator { width: 8px; height: 8px; border-radius: 50%; }
 .card-header .dot-indicator.blue { background: #1677ff; }
@@ -3261,6 +3283,345 @@ def _detect_states(raw_data, sig, machine_id):
 
     return states
 
+# ============================================================
+# === 智能化模型: GBDT-MPC-PID 三级协同架构 (数据分析层) ===
+# ============================================================
+
+def _classify_opening_phases(push_pos_data, push_press_data, drill_press_data,
+                               impact_press_data, t_start, t_end):
+    """开口工艺阶段分类: approach/initial_drill/steady_drill/breakthrough/retract"""
+    phases = []
+
+    seg_push_pos = sorted([(t, v) for t, v in push_pos_data if t_start <= t <= t_end], key=lambda x: x[0])
+    seg_push_press = sorted([(t, v) for t, v in push_press_data if t_start <= t <= t_end], key=lambda x: x[0])
+    seg_drill = sorted([(t, v) for t, v in drill_press_data if t_start <= t <= t_end], key=lambda x: x[0])
+    seg_impact = sorted([(t, v) for t, v in impact_press_data if t_start <= t <= t_end], key=lambda x: x[0])
+
+    if not seg_push_pos:
+        return [{"phase": "unknown", "start": t_start.isoformat(), "end": t_end.isoformat(),
+                 "duration_s": (t_end - t_start).total_seconds()}]
+
+    # Phase 1: Approach (push position < 0.01 change)
+    approach_end = t_start
+    for i in range(1, len(seg_push_pos)):
+        if seg_push_pos[i][1] - seg_push_pos[0][1] > 0.01:
+            approach_end = seg_push_pos[i][0]
+            break
+    if approach_end > t_start:
+        phases.append({"phase": "approach", "label": "接近",
+                        "start": (t_start + LOCAL_OFFSET).isoformat(),
+                        "end": (approach_end + LOCAL_OFFSET).isoformat(),
+                        "duration_s": round((approach_end - t_start).total_seconds(), 1)})
+
+    # Phase 2: Initial drilling (push advancing, drill pressure < 2)
+    init_start = approach_end
+    init_end = init_start
+    for t, v in seg_drill:
+        if t > init_start and v > 2:
+            init_end = t
+            break
+    if init_start < (seg_push_pos[-1][0] if seg_push_pos else t_end):
+        if init_end <= init_start:
+            init_end = (seg_push_pos[-1][0] if seg_push_pos else t_end)
+        phases.append({"phase": "initial_drill", "label": "初钻",
+                        "start": (init_start + LOCAL_OFFSET).isoformat(),
+                        "end": (init_end + LOCAL_OFFSET).isoformat(),
+                        "duration_s": round((init_end - init_start).total_seconds(), 1)})
+
+    # Phase 3: Steady drilling (drill pressure sustained, push advancing)
+    steady_start = init_end
+    steady_end = t_end
+
+    # Detect breakthrough: push position increase + pressure drop
+    pos_dict = {int(t.timestamp()): v for t, v in seg_push_pos}
+    for j in range(3, min(len(seg_push_press), len(seg_push_pos))):
+        t_curr_ts = int(seg_push_press[j][0].timestamp())
+        dp_curr = pos_dict.get(t_curr_ts, 0)
+        dp_old = pos_dict.get(int(seg_push_press[j - 3][0].timestamp()), 0)
+        delta_pos = dp_curr - dp_old
+        p_ratio = (seg_push_press[j][1] - seg_push_press[j - 3][1]) / seg_push_press[j - 3][1] if seg_push_press[j - 3][1] > 0 else 0
+        if delta_pos > 0.1 and p_ratio < -0.2:
+            steady_end = seg_push_press[j][0]
+            # Breakthrough phase
+            if steady_end > steady_start:
+                phases.append({"phase": "steady_drill", "label": "稳态钻进",
+                                "start": (steady_start + LOCAL_OFFSET).isoformat(),
+                                "end": (steady_end + LOCAL_OFFSET).isoformat(),
+                                "duration_s": round((steady_end - steady_start).total_seconds(), 1)})
+                phases.append({"phase": "breakthrough", "label": "钻透突破",
+                                "start": (steady_end + LOCAL_OFFSET).isoformat(),
+                                "end": (t_end + LOCAL_OFFSET).isoformat(),
+                                "duration_s": round((t_end - steady_end).total_seconds(), 1)})
+                break
+    else:
+        if steady_start < t_end:
+            phases.append({"phase": "steady_drill", "label": "稳态钻进",
+                            "start": (steady_start + LOCAL_OFFSET).isoformat(),
+                            "end": (t_end + LOCAL_OFFSET).isoformat(),
+                            "duration_s": round((t_end - steady_start).total_seconds(), 1)})
+
+    return phases
+
+
+def _classify_plugging_phases(mud_pos_data, mud_press_data, mud_qty_data, swing_data, t_start, t_end):
+    """堵口工艺阶段分类: swing_to_position/mud_fill/pressure_hold/swing_back"""
+    phases = []
+
+    seg_mud_press = sorted([(t, v) for t, v in mud_press_data if t_start <= t <= t_end], key=lambda x: x[0])
+    seg_mud_qty = sorted([(t, v) for t, v in mud_qty_data if t_start <= t <= t_end], key=lambda x: x[0])
+
+    if not seg_mud_press:
+        return [{"phase": "unknown", "start": t_start.isoformat(), "end": t_end.isoformat(),
+                 "duration_s": (t_end - t_start).total_seconds()}]
+
+    # Phase 1: Mud filling (pressure building, quantity increasing)
+    fill_end = t_start
+    for t, v in seg_mud_press:
+        if v > 15:
+            fill_end = t
+            break
+    if fill_end > t_start:
+        mud_start_qty = seg_mud_qty[0][1] if seg_mud_qty else 0
+        mud_end_qty = next((v for t, v in seg_mud_qty if t >= fill_end), mud_start_qty)
+        phases.append({"phase": "mud_fill", "label": "打泥填充",
+                        "start": (t_start + LOCAL_OFFSET).isoformat(),
+                        "end": (fill_end + LOCAL_OFFSET).isoformat(),
+                        "duration_s": round((fill_end - t_start).total_seconds(), 1),
+                        "mud_volume": round(mud_end_qty - mud_start_qty, 1)})
+
+    # Phase 2: Pressure hold (pressure 18-22 range)
+    hold_start = fill_end
+    hold_end = hold_start
+    hold_count = 0
+    for t, v in seg_mud_press:
+        if t <= hold_start:
+            continue
+        if 18 <= v <= 22:
+            hold_count += 1
+            hold_end = t
+        else:
+            if hold_count >= 60:
+                break
+            hold_count = 0
+    if hold_end > hold_start:
+        phases.append({"phase": "pressure_hold", "label": "保压",
+                        "start": (hold_start + LOCAL_OFFSET).isoformat(),
+                        "end": (hold_end + LOCAL_OFFSET).isoformat(),
+                        "duration_s": round((hold_end - hold_start).total_seconds(), 1),
+                        "hold_count_s": hold_count})
+
+    # Phase 3: Retraction
+    retract_start = hold_end
+    if retract_start < t_end:
+        phases.append({"phase": "retract", "label": "回退",
+                        "start": (retract_start + LOCAL_OFFSET).isoformat(),
+                        "end": (t_end + LOCAL_OFFSET).isoformat(),
+                        "duration_s": round((t_end - retract_start).total_seconds(), 1)})
+
+    return phases
+
+
+def _score_opening_quality(cycle, phases):
+    """开口质量评分 (0-100)"""
+    score = 100.0
+    details = []
+
+    # Duration check (normal range: 5-20 min)
+    dur_min = cycle.get("duration_s", 0) / 60
+    if dur_min < 3:
+        score -= 20
+        details.append("耗时过短(异常)")
+    elif dur_min > 25:
+        score -= 20
+        details.append("耗时过长")
+    elif dur_min > 18:
+        score -= 10
+        details.append("耗时偏长")
+
+    # Push position change (should be > 0.05 for meaningful drilling)
+    push_change = cycle.get("push_pos_change", 0)
+    if push_change < 0.01:
+        score -= 25
+        details.append("推进量不足")
+    elif push_change < 0.03:
+        score -= 10
+        details.append("推进量偏小")
+
+    # Breakthrough detection
+    if cycle.get("breakthrough"):
+        details.append("已钻透")
+    else:
+        score -= 15
+        details.append("未检测到钻透")
+
+    # Push pressure peak (abnormal if > 25 MPa)
+    push_peak = cycle.get("push_press_peak", 0)
+    if push_peak > 25:
+        score -= 10
+        details.append(f"推进压力过高({push_peak:.0f}MPa)")
+
+    # Drill pressure peak (abnormal if > 30 MPa)
+    drill_peak = cycle.get("drill_press_peak", 0)
+    if drill_peak > 30:
+        score -= 10
+        details.append(f"钻压过高({drill_peak:.0f}MPa)")
+
+    # Phase completeness
+    phase_names = [p["phase"] for p in phases]
+    expected = ["approach", "initial_drill", "steady_drill"]
+    for p in expected:
+        if p not in phase_names:
+            score -= 8
+            details.append(f"缺少{p}阶段")
+
+    score = max(0, score)
+    return {"score": round(score, 1), "grade": "优" if score >= 85 else ("良" if score >= 70 else ("中" if score >= 50 else "差")),
+            "details": details}
+
+
+def _score_plugging_quality(cycle, phases):
+    """堵口质量评分 (0-100)"""
+    score = 100.0
+    details = []
+
+    # Duration check
+    dur_min = cycle.get("duration_s", 0) / 60
+    if dur_min < 2:
+        score -= 20
+        details.append("耗时过短(异常)")
+    elif dur_min > 20:
+        score -= 15
+        details.append("耗时过长")
+
+    # Mud quantity (should be >= 10)
+    mud_qty = cycle.get("mud_qty", 0)
+    if mud_qty < 5:
+        score -= 25
+        details.append("打泥量严重不足")
+    elif mud_qty < 10:
+        score -= 10
+        details.append("打泥量偏少")
+
+    # Pressure hold
+    if cycle.get("hold_ok"):
+        details.append(f"保压OK({cycle.get('hold_duration_s', 0):.0f}s)")
+    else:
+        score -= 20
+        details.append("保压不充分")
+
+    # Mud pressure peak
+    mud_peak = cycle.get("mud_press_peak", 0)
+    if mud_peak < 10:
+        score -= 10
+        details.append("打泥压力过低")
+    elif mud_peak > 30:
+        score -= 10
+        details.append("打泥压力过高")
+
+    # Phase completeness
+    phase_names = [p["phase"] for p in phases]
+    if "mud_fill" not in phase_names:
+        score -= 10
+        details.append("缺少打泥阶段")
+    if "pressure_hold" not in phase_names:
+        score -= 10
+        details.append("缺少保压阶段")
+
+    score = max(0, score)
+    return {"score": round(score, 1), "grade": "优" if score >= 85 else ("良" if score >= 70 else ("中" if score >= 50 else "差")),
+            "details": details}
+
+
+def _detect_anomalies(cycle, phases, raw_press_data, raw_temp_data):
+    """异常检测: 压力/温度/时序异常"""
+    anomalies = []
+
+    # Pressure spike detection
+    press_vals = [v for _, v in raw_press_data]
+    if press_vals:
+        avg = sum(press_vals) / len(press_vals)
+        std = (sum((v - avg) ** 2 for v in press_vals) / len(press_vals)) ** 0.5
+        for _, v in raw_press_data:
+            if std > 0 and abs(v - avg) > 4 * std:
+                anomalies.append("压力剧烈波动")
+                break
+
+    # Temperature trend
+    if raw_temp_data and len(raw_temp_data) >= 2:
+        temps = [v for _, v in raw_temp_data]
+        temp_rise = temps[-1] - temps[0]
+        if temp_rise > 5:
+            anomalies.append(f"温度快速上升({temp_rise:.1f}°C)")
+
+    # Duration anomaly
+    if cycle["type"] == "opening":
+        if cycle.get("duration_s", 0) > 1800:  # > 30 min
+            anomalies.append("开口超时(>30分钟)")
+    else:
+        if cycle.get("duration_s", 0) > 2400:  # > 40 min
+            anomalies.append("堵口超时(>40分钟)")
+
+    # Result check
+    if cycle.get("result") == "fail":
+        anomalies.append("作业失败")
+    elif cycle.get("result") == "incomplete":
+        anomalies.append("作业未完成")
+
+    return anomalies
+
+
+def _recommend_parameters(cycle, all_cycles_history, phases):
+    """基于历史数据启发式推荐最优参数 (模拟GBDT决策)"""
+    recs = []
+
+    hist_same_type = [c for c in all_cycles_history if c["type"] == cycle["type"] and
+                      c["machine"] == cycle.get("machine", "") and c.get("result") == "success"]
+    if not hist_same_type:
+        hist_same_type = [c for c in all_cycles_history if c["type"] == cycle["type"] and c.get("result") == "success"]
+
+    if cycle["type"] == "opening":
+        # Recommend push speed based on successful cycles
+        if hist_same_type:
+            push_changes = [c.get("push_pos_change", 0) for c in hist_same_type if c.get("push_pos_change", 0) > 0.01]
+            durations = [c.get("duration_s", 600) for c in hist_same_type if c.get("duration_s", 0) > 60]
+            if push_changes:
+                avg_change = sum(push_changes) / len(push_changes)
+                recs.append({"param": "target_push_depth", "value": round(avg_change, 3),
+                             "unit": "m", "reason": f"历史成功均值({len(push_changes)}次)"})
+            if durations:
+                avg_dur = sum(durations) / len(durations)
+                recs.append({"param": "expected_duration", "value": round(avg_dur / 60, 1),
+                             "unit": "min", "reason": f"历史成功均值({len(durations)}次)"})
+        if not recs:
+            recs.append({"param": "target_push_depth", "value": 0.08, "unit": "m", "reason": "默认推荐值"})
+
+        # Drill pressure recommendation
+        if hist_same_type:
+            drill_peaks = [c.get("drill_press_peak", 0) for c in hist_same_type if c.get("drill_press_peak", 0) > 0]
+            if drill_peaks:
+                recs.append({"param": "drill_press_limit", "value": round(sum(drill_peaks) / len(drill_peaks) * 1.2, 1),
+                             "unit": "MPa", "reason": "成功峰值1.2x安全边际"})
+
+    else:  # plugging
+        if hist_same_type:
+            mud_qtys = [c.get("mud_qty", 0) for c in hist_same_type if c.get("mud_qty", 0) > 5]
+            hold_durs = [c.get("hold_duration_s", 0) for c in hist_same_type if c.get("hold_duration_s", 0) > 30]
+            if mud_qtys:
+                avg_qty = sum(mud_qtys) / len(mud_qtys)
+                recs.append({"param": "target_mud_qty", "value": round(avg_qty, 1),
+                             "unit": "", "reason": f"历史成功均值({len(mud_qtys)}次)"})
+            if hold_durs:
+                avg_hold = sum(hold_durs) / len(hold_durs)
+                recs.append({"param": "hold_duration", "value": round(avg_hold, 0),
+                             "unit": "s", "reason": f"历史成功均值({len(hold_durs)}次)"})
+        if not recs:
+            recs.append({"param": "target_mud_qty", "value": 12.0, "unit": "", "reason": "默认推荐值"})
+            recs.append({"param": "hold_duration", "value": 60, "unit": "s", "reason": "默认60秒保压"})
+
+    return recs
+
+
+
 def _fetch_cycle_data(start_utc, end_utc, params, window, timeout_ms=30000):
     """查询指定参数的时间序列数据，返回 {param: [(utc_dt, value), ...]}
 
@@ -3519,6 +3880,161 @@ def api_analysis_states():
         all_states.extend(states)
     all_states.sort(key=lambda s: s["time"])
     return jsonify({"states": all_states, "count": len(all_states)})
+
+@app.route("/api/model/analyze")
+def api_model_analyze():
+    """Run full intelligent model on detected cycles: phase classification + quality scoring + anomaly detection."""
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    op_type = request.args.get("type", "all").strip()
+    machine_filter = request.args.get("machine", "all").strip()
+
+    if not start or not end:
+        return jsonify({"error": "missing time params"}), 400
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return jsonify({"error": "bad time format"}), 400
+
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+
+    results = []
+
+    # Collect all required params
+    all_params = set()
+    for side, sig in _OPENING_SIGNALS.items():
+        for k, v in sig.items():
+            if k != "name":
+                all_params.add(v)
+    for side, sig in _PLUGGING_SIGNALS.items():
+        for k, v in sig.items():
+            if k != "name":
+                all_params.add(v)
+    # Add hydraulic temp/press for anomaly detection
+    for mid, sig in _STATE_SIGNALS.items():
+        if 'hydraulic_temp' in sig:
+            all_params.add(sig['hydraulic_temp'])
+            all_params.add(sig['hydraulic_press'])
+
+    raw = _fetch_cycle_data(s_utc, e_utc, list(all_params), "1s")
+    if raw is None:
+        return jsonify({"error": "InfluxDB unreachable", "results": []}), 200
+
+    # Detect cycles
+    all_cycles = []
+    if op_type in ("opening", "all"):
+        for side, sig in _OPENING_SIGNALS.items():
+            all_cycles.extend(_detect_opening_cycles(raw, sig))
+    if op_type in ("plugging", "all"):
+        for side, sig in _PLUGGING_SIGNALS.items():
+            all_cycles.extend(_detect_plugging_cycles(raw, sig))
+    all_cycles.sort(key=lambda c: c["trigger_time"])
+
+    if machine_filter != "all":
+        all_cycles = [c for c in all_cycles if c["machine"] == machine_filter]
+
+    for cycle in all_cycles:
+        ws = datetime.fromisoformat(cycle["window_start"]) - LOCAL_OFFSET
+        we = datetime.fromisoformat(cycle["window_end"]) - LOCAL_OFFSET
+
+        # Find corresponding signal config
+        sig = None
+        if cycle["type"] == "opening":
+            for side, cfg in _OPENING_SIGNALS.items():
+                if cfg["name"] == cycle["machine"]:
+                    sig = cfg
+                    break
+            if sig:
+                phases = _classify_opening_phases(
+                    raw.get(sig["push_pos"], []), raw.get(sig["push_press"], []),
+                    raw.get(sig["drill_press"], []), raw.get(sig.get("impact_press", ""), []),
+                    ws, we)
+        else:
+            for side, cfg in _PLUGGING_SIGNALS.items():
+                if cfg["name"] == cycle["machine"]:
+                    sig = cfg
+                    break
+            if sig:
+                phases = _classify_plugging_phases(
+                    raw.get(sig["mud_pos"], []), raw.get(sig["mud_press"], []),
+                    raw.get(sig["mud_qty"], []), raw.get(sig.get("swing_pos", ""), []),
+                    ws, we)
+
+        if sig is None:
+            continue
+
+        quality = _score_opening_quality(cycle, phases) if cycle["type"] == "opening" else _score_plugging_quality(cycle, phases)
+
+        # Anomaly detection
+        press_key = sig.get("push_press") or sig.get("mud_press", "")
+        temp_data = []
+        for mid, state_sig in _STATE_SIGNALS.items():
+            if state_sig.get("name") == cycle["machine"]:
+                temp_data = raw.get(state_sig.get("hydraulic_temp", ""), [])
+                break
+        anomalies = _detect_anomalies(cycle, phases,
+                                       raw.get(press_key, []),
+                                       temp_data)
+
+        results.append({
+            **cycle,
+            "phases": phases,
+            "quality": quality,
+            "anomalies": anomalies,
+        })
+
+    return jsonify({"results": results, "count": len(results)})
+
+
+@app.route("/api/model/recommend")
+def api_model_recommend():
+    """Generate parameter recommendations based on historical successful cycles."""
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    machine = request.args.get("machine", "").strip()
+    op_type = request.args.get("type", "opening").strip()
+
+    if not start:
+        return jsonify({"error": "missing start time"}), 400
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M") if end else s_local + timedelta(hours=24)
+    except ValueError:
+        return jsonify({"error": "bad time format"}), 400
+
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+
+    # Get all relevant params
+    all_params = set()
+    for side, sig in _OPENING_SIGNALS.items():
+        for k, v in sig.items():
+            if k != "name": all_params.add(v)
+    for side, sig in _PLUGGING_SIGNALS.items():
+        for k, v in sig.items():
+            if k != "name": all_params.add(v)
+
+    raw = _fetch_cycle_data(s_utc, e_utc, list(all_params), "1s")
+    if raw is None:
+        return jsonify({"error": "InfluxDB unreachable"}), 200
+
+    # Detect historical cycles
+    hist_cycles = []
+    if op_type in ("opening", "all"):
+        for side, sig in _OPENING_SIGNALS.items():
+            hist_cycles.extend(_detect_opening_cycles(raw, sig))
+    if op_type in ("plugging", "all"):
+        for side, sig in _PLUGGING_SIGNALS.items():
+            hist_cycles.extend(_detect_plugging_cycles(raw, sig))
+
+    # Dummy current cycle for recommendation
+    current = {"type": op_type, "machine": machine, "result": "success"}
+    recs = _recommend_parameters(current, hist_cycles, [])
+
+    return jsonify({"recommendations": recs, "history_count": len(hist_cycles), "success_count": sum(1 for c in hist_cycles if c.get("result") == "success")})
+
 
 @app.route("/api/analysis/cycles")
 def api_analysis_cycles():
@@ -3818,6 +4334,28 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .state-block.fault { background:#fee2e2;color:#991b1b }
 .state-block.maintenance { background:#fef3c7;color:#92400e }
 .state-block.offline { background:#f1f5f9;color:#64748b }
+.model-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700 }
+.model-badge.A { background:#dcfce7;color:#166534 }
+.model-badge.B { background:#dbeafe;color:#1d4ed8 }
+.model-badge.C { background:#fef9c3;color:#854d0e }
+.model-badge.D { background:#fee2e2;color:#991b1b }
+.phase-bar { display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px;gap:1px }
+.phase-seg { height:100% }
+.phase-seg.approach { background:#94a3b8 }
+.phase-seg.initial_drill { background:#60a5fa }
+.phase-seg.steady_drill { background:#3b82f6 }
+.phase-seg.breakthrough { background:#f59e0b }
+.phase-seg.retract { background:#10b981 }
+.phase-seg.mud_fill { background:#a78bfa }
+.phase-seg.pressure_hold { background:#8b5cf6 }
+.phase-seg.unknown { background:#e2e8f0 }
+.model-panel { background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden }
+.model-panel-header { padding:14px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;color:#0f172a }
+.rec-card { background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:12px 16px }
+.rec-card .rec-title { font-size:11px;color:#0369a1;margin-bottom:4px }
+.rec-card .rec-value { font-size:24px;font-weight:700;color:#0c4a6e }
+.rec-card .rec-unit { font-size:11px;color:#0369a1;font-weight:400 }
+.rec-card .rec-reason { font-size:10px;color:#64748b;margin-top:4px }
 .state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
 
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
@@ -3948,6 +4486,7 @@ tr:hover { background: #f8fafc; }
             </div>
             <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
             <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
+            <button class="btn" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff" onclick="runModelAnalysis()" id="btnModel">智能分析</button>
             <span id="queryTimeRange" style="margin-left:auto;font-size:12px;color:#64748b;white-space:nowrap">--</span>
         </div>
 
@@ -4132,6 +4671,102 @@ function formatTimeOnly(isoStr){
 }
 function renderOpType(t){
     return t=='opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
+}
+
+var globalModelResults = [];
+
+function runModelAnalysis(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    var machine = document.getElementById('dMachine').value;
+    if(!start||!end){showAlert('请选择时间范围','error');return;}
+    document.getElementById('btnModel').disabled = true;
+    showAlert('正在运行智能模型分析...','info');
+    var url = '/api/model/analyze?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(data){
+        globalModelResults = data.results||[];
+        renderModelResults();
+        loadRecommendations(start, end, opType, machine);
+        document.getElementById('btnModel').disabled = false;
+        showAlert('模型分析完成: '+globalModelResults.length+' 个周期已评分','info');
+    }).catch(function(e){
+        showAlert('模型分析失败: '+e.message,'error');
+        document.getElementById('btnModel').disabled = false;
+    });
+}
+
+function loadRecommendations(start, end, opType, machine){
+    if(opType==='all') opType='opening';
+    var url = '/api/model/recommend?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end||start)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(data){
+        renderRecommendations(data.recommendations||[], data.history_count||0, data.success_count||0);
+    }).catch(function(e){console.log('Recommend load failed:',e)});
+}
+
+function renderModelResults(){
+    var card = document.getElementById('modelCard');
+    var body = document.getElementById('modelBody');
+    if(globalModelResults.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">';
+    globalModelResults.forEach(function(r){
+        var grade=r.quality.grade;
+        var gradeCls={'优':'A','良':'B','中':'C','差':'D'}[grade]||'D';
+        html+='<div style="border:1px solid #f1f5f9;border-radius:12px;padding:14px;background:#fafbfc">';
+        html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        html+='<span style="font-weight:600;font-size:12px">'+r.machine+'</span>';
+        html+='<span style="font-size:10px;color:#94a3b8">'+r.type+' | '+r.trigger_time.substring(11,19)+'</span>';
+        html+='</div>';
+        // Quality score
+        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
+        html+='<span style="font-size:28px;font-weight:700;color:'+(r.quality.score>=80?'#16a34a':r.quality.score>=60?'#d97706':'#dc2626')+'">'+r.quality.score+'</span>';
+        html+='<span class="model-badge '+gradeCls+'">'+grade+'</span>';
+        html+='</div>';
+        // Details
+        html+='<div style="font-size:10px;color:#64748b;margin-bottom:8px">'+r.quality.details.join(' | ')+'</div>';
+        // Phase bar
+        if(r.phases.length>0){
+            var totalDur=r.phases.reduce(function(s,p){return s+(p.duration_s||0)},0)||1;
+            html+='<div class="phase-bar">';
+            r.phases.forEach(function(p){
+                var pct=Math.max((p.duration_s/totalDur)*100,2);
+                html+='<div class="phase-seg '+p.phase+'" style="width:'+pct+'%" title="'+p.label+': '+p.duration_s+'s"></div>';
+            });
+            html+='</div>';
+            html+='<div style="font-size:9px;color:#94a3b8;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">';
+            r.phases.forEach(function(p){
+                html+='<span>'+p.label+' '+p.duration_s+'s</span>';
+            });
+            html+='</div>';
+        }
+        // Anomalies
+        if(r.anomalies.length>0){
+            html+='<div style="margin-top:6px;font-size:10px;color:#dc2626">';
+            r.anomalies.forEach(function(a){html+='<span style="margin-right:6px">..'+a+'</span>'});
+            html+='</div>';
+        }
+        html+='</div>';
+    });
+    html+='</div>';
+    body.innerHTML=html;
+}
+
+function renderRecommendations(recs, histCount, succCount){
+    var card = document.getElementById('recommendCard');
+    var body = document.getElementById('recommendBody');
+    if(recs.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var html='';
+    recs.forEach(function(r){
+        html+='<div class="rec-card">';
+        html+='<div class="rec-title">'+r.param+'</div>';
+        html+='<div class="rec-value">'+r.value+'<span class="rec-unit"> '+r.unit+'</span></div>';
+        html+='<div class="rec-reason">'+r.reason+'</div>';
+        html+='</div>';
+    });
+    html+='<div style="font-size:10px;color:#94a3b8;grid-column:1/-1">基于 '+succCount+'/'+histCount+' 次历史成功作业</div>';
+    body.innerHTML=html;
 }
 
 function runAnalysis(){
