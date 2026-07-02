@@ -3154,7 +3154,7 @@ def _detect_opening_cycles(raw_data, sig):
     if len(pos) < 2 or len(remote) < 2:
         return []
 
-    rem_map = {t.timestamp(): v for t, v in remote}
+    rem_map = {int(t.timestamp()): v for t, v in remote}
     cycles = []
 
     for i in range(1, len(pos)):
@@ -3162,7 +3162,7 @@ def _detect_opening_cycles(raw_data, sig):
         if not (prev_v < 90 and curr_v >= 90):
             continue
         t_cross = pos[i][0]
-        t_cross_ts = t_cross.timestamp()
+        t_cross_ts = int(t_cross.timestamp())
 
         remote_on = rem_map.get(t_cross_ts, 0) >= 0.5
         if not remote_on:
@@ -3319,6 +3319,21 @@ def _detect_plugging_cycles(raw_data, sig):
         })
 
     return cycles
+
+@app.route("/api/analysis/ping")
+def api_analysis_ping():
+    """Test InfluxDB connectivity for analysis module."""
+    try:
+        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG, timeout=5000)
+        try:
+            query_api = client.query_api()
+            flux = f'from(bucket: "{INFLUX_BUCKET}") |> range(start: -1m) |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}") |> filter(fn: (r) => r._field == "value") |> limit(n: 1)'
+            tables = query_api.query(flux)
+            return jsonify({"ok": True, "reachable": True, "message": "InfluxDB connection OK"})
+        finally:
+            client.close()
+    except Exception as e:
+        return jsonify({"ok": True, "reachable": False, "message": f"InfluxDB unreachable: {e}"})
 
 @app.route("/api/analysis/cycles")
 def api_analysis_cycles():
@@ -3841,6 +3856,19 @@ function checkLogin(){
     }).catch(function(e){console.log('Auth check failed, redirecting:', e);window.location.href='/';});
 }
 checkLogin();
+
+function checkInfluxDB(){
+    fetch('/api/analysis/ping?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        var el=document.getElementById('sysStatus');
+        if(d.reachable){el.style.background='#52c41a';el.style.boxShadow='0 0 4px rgba(82,196,26,0.5)';}
+        else{el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';showAlert('InfluxDB unreachable: '+d.message,'error');}
+    }).catch(function(e){
+        var el=document.getElementById('sysStatus');
+        el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';
+        showAlert('InfluxDB ping failed: '+e.message,'error');
+    });
+}
+checkInfluxDB();
 
 function doLogout(){
     fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
