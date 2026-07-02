@@ -3765,7 +3765,7 @@ tr:hover { background: #f8fafc; }
         </div>
 
         <div class="card">
-            <div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
+            <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span> <span style="font-size:10px;color:#94a3b8;margin-left:8px">点击折叠</span></div>
             <div class="card-body" style="overflow-x:auto">
                 <div id="cycleEmpty" class="empty-state"><h3>选择时间范围</h3><p>点击「开始分析」自动识别开口和堵口作业周期，按GBDT-MPC-PID协议分类</p></div>
                 <table id="cycleTable" style="display:none">
@@ -3809,9 +3809,9 @@ function getLabelMap(){
 
 function initDates(){
     var now = new Date();
-    var d1 = new Date(now.getTime() - 3*86400000);
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    document.getElementById('dStart').value = today.toISOString().slice(0,16);
     document.getElementById('dEnd').value = now.toISOString().slice(0,16);
-    document.getElementById('dStart').value = d1.toISOString().slice(0,16);
 }
 initDates();
 
@@ -3889,6 +3889,15 @@ function runAnalysis(){
 
     if(!start||!end){
         showAlert('请选择开始和结束时间', 'error');
+        return;
+    }
+    var diff =(new Date(end).getTime()-new Date(start).getTime())/3600000;
+    if(diff > 24){
+        showAlert('时间跨度不能超过24小时，当前跨度 '+Math.round(diff)+' 小时', 'error');
+        return;
+    }
+    if(diff < 0){
+        showAlert('结束时间不能早于开始时间', 'error');
         return;
     }
     if(!APP_TOKEN){
