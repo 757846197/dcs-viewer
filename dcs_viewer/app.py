@@ -4225,5 +4225,9 @@ if __name__ == "__main__":
             _time.sleep(1.5)
             webbrowser.open(f"http://localhost:{FLASK_PORT}")
         threading.Thread(target=_open_browser, daemon=True).start()
-    from waitress import serve
-    serve(app, host=FLASK_HOST, port=FLASK_PORT, threads=8)
+    try:
+        from waitress import serve
+        serve(app, host=FLASK_HOST, port=FLASK_PORT, threads=8)
+    except ImportError:
+        print("  提示: 未安装 waitress，使用 Flask 内置开发服务器")
+        app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False, threaded=True)
