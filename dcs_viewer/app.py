@@ -276,6 +276,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
 .card-body { padding: 24px; }
 .card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
+.state-block { display:inline-block;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;cursor:default;position:relative }
+.state-block.standby { background:#dbeafe;color:#1d4ed8 }
+.state-block.working { background:#dcfce7;color:#166534 }
+.state-block.fault { background:#fee2e2;color:#991b1b }
+.state-block.maintenance { background:#fef3c7;color:#92400e }
+.state-block.offline { background:#f1f5f9;color:#64748b }
+.state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
 .card-header .dot-indicator { width: 8px; height: 8px; border-radius: 50%; }
 .card-header .dot-indicator.blue { background: #1677ff; }
 .card-header .dot-indicator.green { background: #52c41a; }
@@ -3103,6 +3110,157 @@ _PLUGGING_SIGNALS = {
 }
 
 
+
+
+# === 信号配置: 设备状态识别 ===
+_STATE_SIGNALS = {
+    "east_opener": {
+        "name": "东开口机",
+        "remote_select": "LT_LQFC_57",
+        "swing_cmd": "LT_LQFC_59",
+        "cart_cmd": "LT_LQFC_61",
+        "impact_cmd": "LT_LQFC_69",
+        "swing_pos": "LT_LQFC_63",
+        "push_pos": "LT_LQFC_67",
+    },
+    "west_opener": {
+        "name": "西开口机",
+        "remote_select": "LT_LQFC_94",
+        "swing_cmd": "LT_LQFC_96",
+        "cart_cmd": "LT_LQFC_98",
+        "impact_cmd": "LT_LQFC_106",
+        "swing_pos": "LT_LQFC_100",
+        "push_pos": "LT_LQFC_104",
+    },
+    "east_plugger": {
+        "name": "东堵口机",
+        "remote_power": "LT_LQFC_129",
+        "remote_start": "LT_LQFC_130",
+        "emergency_stop": "LT_LQFC_142",
+        "set_mode": "LT_LQFC_141",
+        "wait_pos": "LT_LQFC_143",
+        "work_pos": "LT_LQFC_144",
+        "hydraulic_temp": "LT_LQFC_150",
+        "hydraulic_press": "LT_LQFC_151",
+    },
+    "west_plugger": {
+        "name": "西堵口机",
+        "remote_power": "LT_LQFC_152",
+        "remote_start": "LT_LQFC_153",
+        "emergency_stop": "LT_LQFC_165",
+        "set_mode": "LT_LQFC_164",
+        "wait_pos": "LT_LQFC_166",
+        "work_pos": "LT_LQFC_167",
+        "hydraulic_temp": "LT_LQFC_173",
+        "hydraulic_press": "LT_LQFC_174",
+    },
+}
+
+
+def _detect_states(raw_data, sig, machine_id):
+    states = []
+
+    if 'remote_start' in sig:
+        # Plugger state detection
+        remote_power = sorted(raw_data.get(sig['remote_power'], []), key=lambda x: x[0])
+        remote_start = sorted(raw_data.get(sig['remote_start'], []), key=lambda x: x[0])
+        emergency = sorted(raw_data.get(sig['emergency_stop'], []), key=lambda x: x[0])
+        set_mode = sorted(raw_data.get(sig['set_mode'], []), key=lambda x: x[0])
+        hydraulic_temp = sorted(raw_data.get(sig['hydraulic_temp'], []), key=lambda x: x[0])
+
+        if not remote_power:
+            return states
+
+        rp_map = {}
+        for t, v in remote_power: rp_map[int(t.timestamp())] = v
+        rs_map = {}
+        for t, v in remote_start: rs_map[int(t.timestamp())] = v
+        em_map = {}
+        for t, v in emergency: em_map[int(t.timestamp())] = v
+        sm_map = {}
+        for t, v in set_mode: sm_map[int(t.timestamp())] = v
+        temp_map = {}
+        for t, v in hydraulic_temp: temp_map[int(t.timestamp())] = v
+
+        all_ts = sorted(set(list(rp_map.keys()) + list(rs_map.keys()) + list(em_map.keys())))
+
+        prev_state = None
+        for ts in all_ts:
+            rp = rp_map.get(ts, rp_map.get(ts - 1, rp_map.get(ts + 1, 0)))
+            rs = rs_map.get(ts, rs_map.get(ts - 1, rs_map.get(ts + 1, 0)))
+            em = em_map.get(ts, em_map.get(ts - 1, em_map.get(ts + 1, 0)))
+            sm = sm_map.get(ts, sm_map.get(ts - 1, sm_map.get(ts + 1, 0)))
+            ht = temp_map.get(ts, temp_map.get(ts - 1, temp_map.get(ts + 1, 50)))
+
+            if sm >= 0.5 and rs < 0.5:
+                state = 'maintenance'
+            elif em >= 0.5 or ht > 60:
+                state = 'fault'
+            elif rs >= 0.5 and em < 0.5:
+                state = 'working'
+            elif rp >= 0.5 and rs < 0.5 and em < 0.5:
+                state = 'standby'
+            else:
+                state = 'offline'
+
+            if state != prev_state:
+                t_local = datetime.fromtimestamp(ts, tz=timezone.utc) + LOCAL_OFFSET
+                states.append({
+                    'machine': sig['name'],
+                    'machine_id': machine_id,
+                    'time': t_local.isoformat(),
+                    'state': state,
+                    'label': {'standby': u'\u5f85\u673a', 'working': u'\u5de5\u4f5c\u4e2d', 'fault': u'\u6545\u969c', 'maintenance': u'\u7ef4\u62a4', 'offline': u'\u79bb\u7ebf'}[state],
+                })
+                prev_state = state
+    else:
+        # Opener state detection (simplified)
+        remote_select = sorted(raw_data.get(sig['remote_select'], []), key=lambda x: x[0])
+        swing_cmd = sorted(raw_data.get(sig['swing_cmd'], []), key=lambda x: x[0])
+        cart_cmd = sorted(raw_data.get(sig['cart_cmd'], []), key=lambda x: x[0])
+        impact_cmd = sorted(raw_data.get(sig['impact_cmd'], []), key=lambda x: x[0])
+
+        if not remote_select:
+            return states
+
+        rs_map = {}
+        for t, v in remote_select: rs_map[int(t.timestamp())] = v
+        sc_map = {}
+        for t, v in swing_cmd: sc_map[int(t.timestamp())] = v
+        cc_map = {}
+        for t, v in cart_cmd: cc_map[int(t.timestamp())] = v
+        ic_map = {}
+        for t, v in impact_cmd: ic_map[int(t.timestamp())] = v
+
+        all_ts = sorted(set(list(rs_map.keys()) + list(sc_map.keys())))
+
+        prev_state = None
+        for ts in all_ts:
+            rs = rs_map.get(ts, rs_map.get(ts - 1, rs_map.get(ts + 1, 0)))
+            sc = sc_map.get(ts, sc_map.get(ts - 1, sc_map.get(ts + 1, 0)))
+            cc = cc_map.get(ts, cc_map.get(ts - 1, cc_map.get(ts + 1, 0)))
+            ic = ic_map.get(ts, ic_map.get(ts - 1, ic_map.get(ts + 1, 0)))
+
+            if rs >= 0.5 and sc < 0.5 and cc < 0.5 and ic < 0.5:
+                state = 'standby'
+            elif rs >= 0.5 and (sc >= 0.5 or cc >= 0.5 or ic >= 0.5):
+                state = 'working'
+            else:
+                state = 'offline'
+
+            if state != prev_state:
+                t_local = datetime.fromtimestamp(ts, tz=timezone.utc) + LOCAL_OFFSET
+                states.append({
+                    'machine': sig['name'],
+                    'machine_id': machine_id,
+                    'time': t_local.isoformat(),
+                    'state': state,
+                    'label': {'standby': u'\u5f85\u673a', 'working': u'\u5de5\u4f5c\u4e2d', 'offline': u'\u79bb\u7ebf'}[state],
+                })
+                prev_state = state
+
+    return states
+
 def _fetch_cycle_data(start_utc, end_utc, params, window, timeout_ms=30000):
     """查询指定参数的时间序列数据，返回 {param: [(utc_dt, value), ...]}
 
@@ -3334,6 +3492,33 @@ def api_analysis_ping():
             client.close()
     except Exception as e:
         return jsonify({"ok": True, "reachable": False, "message": f"InfluxDB unreachable: {e}"})
+
+@app.route("/api/analysis/states")
+def api_analysis_states():
+    start = request.args.get("start", "").strip()
+    end = request.args.get("end", "").strip()
+    machine_id = request.args.get("machine", "all").strip()
+    if not start or not end:
+        return jsonify({"error": "missing time params"}), 400
+    try:
+        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
+        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return jsonify({"error": "bad time format"}), 400
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    all_states = []
+    for mid, sig in _STATE_SIGNALS.items():
+        if machine_id != "all" and mid != machine_id:
+            continue
+        all_params = [v for k, v in sig.items() if k != "name"]
+        raw = _fetch_cycle_data(s_utc, e_utc, all_params, "30s")
+        if raw is None:
+            continue
+        states = _detect_states(raw, sig, mid)
+        all_states.extend(states)
+    all_states.sort(key=lambda s: s["time"])
+    return jsonify({"states": all_states, "count": len(all_states)})
 
 @app.route("/api/analysis/cycles")
 def api_analysis_cycles():
@@ -3627,6 +3812,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
 .card-body { padding: 24px; }
 .card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
+.state-block { display:inline-block;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;cursor:default;position:relative }
+.state-block.standby { background:#dbeafe;color:#1d4ed8 }
+.state-block.working { background:#dcfce7;color:#166534 }
+.state-block.fault { background:#fee2e2;color:#991b1b }
+.state-block.maintenance { background:#fef3c7;color:#92400e }
+.state-block.offline { background:#f1f5f9;color:#64748b }
+.state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
 
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .filter-group { display: flex; flex-direction: column; gap: 5px; }
@@ -3760,6 +3952,14 @@ tr:hover { background: #f8fafc; }
         </div>
 
         <div class="stats-row" id="statsRow"></div>
+
+        <div class="card" id="stateTimelineCard" style="display:none">
+            <div class="card-header"><span class="dot-indicator" style="background:#8b5cf6"></span>设备状态时间线</div>
+            <div class="card-body" id="stateTimeline" style="max-height:200px;overflow-y:auto;padding:12px 24px">
+                <div id="stateTimelineContent" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
+            </div>
+        </div>
+
 
         <div style="display:flex;gap:16px;margin-bottom:16px">
             <div class="card" style="flex:1;margin-bottom:0">
@@ -3978,6 +4178,7 @@ function runAnalysis(){
             globalCycles = globalCycles.filter(function(c){return c.machine===machine;});
         }
         renderCycles();
+        loadStates();
         renderStats();
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
         document.getElementById('btnAnalyze').disabled = false;
@@ -4120,7 +4321,39 @@ function loadDetailChart(c, metrics){
     }).catch(function(){});
 }
 
-function exportResult(){
+
+function loadStates(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    if(!start||!end) return;
+    var url = '/api/analysis/states?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&machine=all&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(data){
+        renderStateTimeline(data.states||[]);
+    }).catch(function(e){console.log('State load failed:',e)});
+}
+
+function renderStateTimeline(states){
+    var card = document.getElementById('stateTimelineCard');
+    var content = document.getElementById('stateTimelineContent');
+    if(states.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var colors={'standby':'standby','working':'working','fault':'fault','maintenance':'maintenance','offline':'offline'};
+    var html='';
+    var lastMachine='';
+    states.forEach(function(s,i){
+        if(s.machine!==lastMachine){
+            if(lastMachine!=='') html+='<div style="width:100%;height:1px;margin:6px 0;background:#f1f5f9"></div>';
+            html+='<div style="font-size:10px;color:#94a3b8;font-weight:600;width:100%;margin-bottom:4px">'+s.machine+'</div>';
+            lastMachine=s.machine;
+        }
+        var t=s.time.substring(11,16);
+        html+='<span class="state-block '+s.state+'" title="'+s.time+'">'+t+' '+s.label+'</span>';
+        if(i<states.length-1 && states[i+1].machine===s.machine) html+='<span class="state-separator">→</span>';
+    });
+    content.innerHTML=html;
+}
+
+function exportResult(){function exportResult(){
     if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
     var start = document.getElementById('dStart').value;
     var end = document.getElementById('dEnd').value;
