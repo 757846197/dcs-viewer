@@ -3161,19 +3161,32 @@ def _detect_opening_cycles(raw_data, sig):
             continue
 
         t_start = t_cross
-        t_end = t_start + timedelta(minutes=15)
+        # 先用较大窗口扫描数据，再检测实际结束时间
+        t_scan = t_start + timedelta(minutes=30)
 
         push_pos_change = 0.0
         push_press_peak = 0.0
         drill_press_peak = 0.0
         breakthrough_detected = False
 
-        # Calculate push position change
+        # Calculate push position change (扫描 30min 窗口找实际结束)
         pos_before = [v for t, v in push_pos if t < t_start]
-        pos_after = [(t, v) for t, v in push_pos if t_start <= t <= t_end]
+        pos_after = [(t, v) for t, v in push_pos if t_start <= t <= t_scan]
         if pos_after:
             ref = pos_before[-1] if pos_before else pos_after[0][1]
             push_pos_change = pos_after[-1][1] - ref
+
+        # 检测实际结束时间：推进位移最大值之后开始回退
+        t_end = t_start + timedelta(minutes=15)  # 默认15分钟
+        if len(pos_after) >= 2:
+            max_idx = max(range(len(pos_after)), key=lambda i: pos_after[i][1])
+            t_end = pos_after[max_idx][0]
+            # 从最大值之后继续扫描，找位移开始下降的点
+            for j in range(max_idx + 1, len(pos_after)):
+                if pos_after[j][1] < pos_after[j-1][1] - 0.01:
+                    t_end = pos_after[j][0]
+                    break
+                t_end = pos_after[j][0]
 
         # Calculate pressure peaks and breakthrough detection
         if push_press:
@@ -3589,7 +3602,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
 .container { padding: 24px 32px; }
 
-.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 20px; margin-bottom: 20px; }
 .stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
 .stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
 .stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
@@ -3730,6 +3743,25 @@ tr:hover { background: #f8fafc; }
         </div>
 
         <div class="stats-row" id="statsRow"></div>
+
+        <div class="card" id="metricGuide" style="margin-bottom:16px">
+            <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">
+                关键指标说明 <span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:8px">点击展开/折叠</span>
+            </div>
+            <div class="card-body" style="display:none;font-size:12px;line-height:1.8;color:#475569">
+                <table style="font-size:11px"><thead><tr><th style="width:130px">指标</th><th style="width:360px">含义</th><th>适用</th></tr></thead><tbody>
+                <tr><td style="font-weight:600">钻进位移</td><td>开口小车推进位置变化量（终点-起点），反映开口深度</td><td><span class="tag tag-info">开口</span></td></tr>
+                <tr><td style="font-weight:600">推进压力峰值</td><td>推进进油压力在窗口内最大值（MPa），反映钻进阻力</td><td><span class="tag tag-info">开口</span></td></tr>
+                <tr><td style="font-weight:600">转钎压力峰值</td><td>转钎进油压力在窗口内最大值（MPa），反映钻杆扭矩</td><td><span class="tag tag-info">开口</span></td></tr>
+                <tr><td style="font-weight:600">钻透判定</td><td>推进位移骤增(>0.1m)且压力骤降(>20%)时判定已钻透</td><td><span class="tag tag-info">开口</span></td></tr>
+                <tr><td style="font-weight:600">冲击状态</td><td>冲击进油压力是否激活（>0.5MPa），反映冲击锤状态</td><td><span class="tag tag-info">开口</span></td></tr>
+                <tr><td style="font-weight:600">打泥量</td><td>打泥累计值，反映注入铁口的炮泥总量</td><td><span class="tag tag-warn">堵口</span></td></tr>
+                <tr><td style="font-weight:600">打泥压力峰值</td><td>打泥压力窗口内最大值（MPa），19-21MPa为合理</td><td><span class="tag tag-warn">堵口</span></td></tr>
+                <tr><td style="font-weight:600">保压时长</td><td>压力18-22MPa区间持续秒数，≥60s为合格保压</td><td><span class="tag tag-warn">堵口</span></td></tr>
+                <tr><td style="font-weight:600">耗时</td><td>触发到结束完整时长（根据实际位移/压力动态判定）</td><td>全部</td></tr>
+                </tbody></table>
+            </div>
+        </div>
 
         <div class="card">
             <div class="card-header">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
@@ -3938,14 +3970,14 @@ function renderCycles(){
             keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
             if(c.hold_ok)keyMetric += ' | 保压OK';
         }
-        var winStart = (c.window_start||'').substring(11,19);
-        var winEnd = (c.window_end||'').substring(11,19);
+        var winStart = (c.window_start||'').substring(0,19);
+        var winEnd = (c.window_end||'').substring(0,19);
         var durMin = Math.floor((c.duration_s||0)/60);
         var durSec = Math.round((c.duration_s||0)%60);
         html += '<tr>';
         html += '<td style="font-weight:600">'+c.machine+'</td>';
         html += '<td>'+renderOpType(c.type)+'</td>';
-        html += '<td>'+(c.trigger_time||'').substring(11,19)+'</td>';
+        html += '<td>'+(c.trigger_time||'').substring(0,19)+'</td>';
         html += '<td>'+winStart+' ~ '+winEnd+'</td>';
         html += '<td>'+durMin+'分'+durSec+'秒</td>';
         html += '<td style="font-size:11px">'+keyMetric+'</td>';
