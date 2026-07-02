@@ -3103,31 +3103,44 @@ _PLUGGING_SIGNALS = {
 }
 
 
-def _fetch_cycle_data(start_utc, end_utc, params, window):
-    """查询指定参数的时间序列数据，返回 {param: [(utc_dt, value), ...]}"""
+def _fetch_cycle_data(start_utc, end_utc, params, window, timeout_ms=30000):
+    """查询指定参数的时间序列数据，返回 {param: [(utc_dt, value), ...]}
+
+    Args:
+        timeout_ms: InfluxDB 查询超时，默认 30s（分析专用短超时）
+    """
     param_filter = sanitize_param_for_flux(params)
-    client = get_client()
-    query_api = client.query_api()
-    flux = f'''from(bucket: "{INFLUX_BUCKET}")
+    client = InfluxDBClient(
+        url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG,
+        timeout=timeout_ms
+    )
+    try:
+        query_api = client.query_api()
+        flux = f'''from(bucket: "{INFLUX_BUCKET}")
   |> range(start: {start_utc}, stop: {end_utc})
   |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
   |> filter(fn: (r) => r._field == "value")
   |> filter(fn: (r) => {param_filter})
   |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)'''
 
-    tables = query_api.query(flux)
-    raw = {}
-    for table in tables:
-        for record in table.records:
-            p = record.values.get("param", "")
-            t = record.get_time()
-            v = record.get_value()
-            if v is None:
-                continue
-            if p not in raw:
-                raw[p] = []
-            raw[p].append((t, float(v)))
-    return raw
+        tables = query_api.query(flux)
+        raw = {}
+        for table in tables:
+            for record in table.records:
+                p = record.values.get("param", "")
+                t = record.get_time()
+                v = record.get_value()
+                if v is None:
+                    continue
+                if p not in raw:
+                    raw[p] = []
+                raw[p].append((t, float(v)))
+        return raw
+    except Exception as e:
+        print(f"[WARN] _fetch_cycle_data failed (timeout={timeout_ms}ms): {e}", flush=True)
+        return {}
+    finally:
+        client.close()
 
 
 def _detect_opening_cycles(raw_data, sig):
