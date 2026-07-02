@@ -3874,8 +3874,14 @@ function renderTag(result){
 function formatBeijingTime(isoStr){
     if(!isoStr)return'--';
     var m=isoStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
-    if(m)return m[2]+'-'+m[3]+' '+m[4];
+    if(m)return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4];
     return isoStr.substring(0,19);
+}
+function formatTimeOnly(isoStr){
+    if(!isoStr)return'--';
+    var m=isoStr.match(/T(\d{2}:\d{2}:\d{2})/);
+    if(m)return m[1];
+    return isoStr.substring(11,19);
 }
 function renderOpType(t){
     return t=='opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
@@ -3982,8 +3988,8 @@ function renderCycles(){
             keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
             if(c.hold_ok)keyMetric += ' | 保压OK';
         }
-        var winStart = formatBeijingTime(c.window_start);
-        var winEnd = formatBeijingTime(c.window_end);
+        var winStart = formatTimeOnly(c.window_start);
+        var winEnd = formatTimeOnly(c.window_end);
         var durMin = Math.floor((c.duration_s||0)/60);
         var durSec = Math.round((c.duration_s||0)%60);
         html += '<tr>';
