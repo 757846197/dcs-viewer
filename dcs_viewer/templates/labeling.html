@@ -110,6 +110,13 @@ tr.row-labeled { background: #f0fdf4; }
 .two-panel .panel-left { flex: 1; min-width: 0; }
 .two-panel .panel-right { width: 380px; min-width: 380px; }
 
+/* 标注详情弹窗 */
+.detail-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; align-items: center; justify-content: center; }
+.detail-modal.show { display: flex; }
+.detail-modal .detail-popup { background: #fff; border-radius: 16px; box-shadow: 0 8px 40px rgba(0,0,0,0.2); width: 640px; max-width: 95vw; max-height: 85vh; overflow-y: auto; }
+.detail-modal .detail-popup .card-header { position: sticky; top: 0; background: #fff; z-index: 1; }
+.detail-modal .detail-popup .card-body { padding: 24px; }
+
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; }
 .detail-grid dt { color: #94a3b8; font-weight: 500; }
 .detail-grid dd { color: #1f2937; font-weight: 600; margin: 0; }
@@ -135,8 +142,7 @@ tr.row-labeled { background: #f0fdf4; }
     .sidebar .nav-item span, .sidebar .nav-section-title { display: none; }
     .main { margin-left: 60px; }
     .filter-bar { flex-direction: column; }
-    .two-panel { flex-direction: column; }
-    .two-panel .panel-right { width: 100%; min-width: 100%; }
+    .detail-popup { width: 95vw !important; }
 }
 </style>
 </head>
@@ -213,91 +219,87 @@ tr.row-labeled { background: #f0fdf4; }
             </div>
         </div>
 
-        <div class="two-panel">
-            <div class="panel-left">
-                <div class="card">
-                    <div class="card-header">循环列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
-                    <div class="card-body" style="overflow-x:auto">
-                        <div id="cycleEmpty" class="empty-state"><h3>选择筛选条件</h3><p>点击「查询循环」加载开口和堵口作业周期，进行人工标注</p></div>
-                        <table id="cycleTable" style="display:none">
-                            <thead><tr>
-                                <th>设备</th><th>类型</th><th>开始时间</th><th>结束时间</th><th>耗时</th><th>标注状态</th><th>操作</th>
-                            </tr></thead>
-                            <tbody id="cycleBody"></tbody>
-                        </table>
-                        <div class="pagination" id="pagination"></div>
+        <div class="card" style="margin-top:8px">
+            <div class="card-header">循环列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
+            <div class="card-body" style="overflow-x:auto">
+                <div id="cycleEmpty" class="empty-state"><h3>选择筛选条件</h3><p>点击「查询循环」加载开口和堵口作业周期，进行人工标注</p></div>
+                <table id="cycleTable" style="display:none">
+                    <thead><tr>
+                        <th>设备</th><th>类型</th><th>开始时间</th><th>结束时间</th><th>耗时</th><th>标注状态</th><th>操作</th>
+                    </tr></thead>
+                    <tbody id="cycleBody"></tbody>
+                </table>
+                <div class="pagination" id="pagination"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 标注详情弹窗 -->
+<div class="detail-modal" id="detailModal" onclick="if(event.target===this)closeDetail()">
+    <div class="detail-popup" id="detailPopup">
+        <div class="card-header">
+            循环详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span>
+            <button class="close-btn" onclick="closeDetail()">&times;</button>
+            <span id="labelStatus" class="tag" style="margin-left:8px"></span>
+        </div>
+        <div class="card-body">
+            <dl class="detail-grid" id="detailInfo"></dl>
+            <div style="margin-top:16px">
+                <div class="form-section-title">标注信息</div>
+                <div class="form-row">
+                    <div class="form-group"><label>状态</label>
+                        <select id="lblStatus">
+                            <option value="success">成功</option>
+                            <option value="fail">失败</option>
+                            <option value="anomaly">异常</option>
+                            <option value="incomplete">未完成</option>
+                        </select>
+                    </div>
+                    <div class="form-group"><label>成功判定</label>
+                        <select id="lblSuccess">
+                            <option value="">未判定</option>
+                            <option value="yes">是（成功）</option>
+                            <option value="no">否（失败）</option>
+                        </select>
+                    </div>
+                    <div class="form-group"><label>标注人</label>
+                        <input type="text" id="lblLabeler" placeholder="输入标注人姓名">
                     </div>
                 </div>
-            </div>
-
-            <div class="panel-right">
-                <div class="card" id="detailCard" style="display:none">
-                    <div class="card-header">
-                        循环详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span>
-                        <button class="close-btn" onclick="closeDetail()">&times;</button>
-                        <span id="labelStatus" class="tag" style="margin-left:8px"></span>
+                <div class="form-group"><label>阶段数据 (JSON)</label>
+                    <textarea id="lblPhases" placeholder='[{"phase":"approach","start":"...","end":"...","duration_s":10}, ...]'></textarea>
+                </div>
+                <div class="form-group"><label>异常标签（多选）</label>
+                    <div class="checkbox-group" id="anomalyTags">
+                        <label><input type="checkbox" value="钻透信号缺失"> 钻透信号缺失</label>
+                        <label><input type="checkbox" value="推进压力异常"> 推进压力异常</label>
+                        <label><input type="checkbox" value="转钎压力异常"> 转钎压力异常</label>
+                        <label><input type="checkbox" value="打泥量不足"> 打泥量不足</label>
+                        <label><input type="checkbox" value="保压不足"> 保压不足</label>
+                        <label><input type="checkbox" value="冲击未开启"> 冲击未开启</label>
+                        <label><input type="checkbox" value="周期截断"> 周期截断</label>
+                        <label><input type="checkbox" value="传感器抖动"> 传感器抖动</label>
                     </div>
-                    <div class="card-body">
-                        <dl class="detail-grid" id="detailInfo"></dl>
-
-                        <div style="margin-top:16px">
-                            <div class="form-section-title">标注信息</div>
-                            <div class="form-row">
-                                <div class="form-group"><label>状态</label>
-                                    <select id="lblStatus">
-                                        <option value="success">成功</option>
-                                        <option value="fail">失败</option>
-                                        <option value="anomaly">异常</option>
-                                        <option value="incomplete">未完成</option>
-                                    </select>
-                                </div>
-                                <div class="form-group"><label>成功判定</label>
-                                    <select id="lblSuccess">
-                                        <option value="">未判定</option>
-                                        <option value="yes">是（成功）</option>
-                                        <option value="no">否（失败）</option>
-                                    </select>
-                                </div>
-                                <div class="form-group"><label>标注人</label>
-                                    <input type="text" id="lblLabeler" placeholder="输入标注人姓名">
-                                </div>
-                            </div>
-                            <div class="form-group"><label>阶段数据 (JSON)</label>
-                                <textarea id="lblPhases" placeholder='[{"phase":"approach","start":"...","end":"...","duration_s":10}, ...]'></textarea>
-                            </div>
-                            <div class="form-group"><label>异常标签（多选）</label>
-                                <div class="checkbox-group" id="anomalyTags">
-                                    <label><input type="checkbox" value="钻透信号缺失"> 钻透信号缺失</label>
-                                    <label><input type="checkbox" value="推进压力异常"> 推进压力异常</label>
-                                    <label><input type="checkbox" value="转钎压力异常"> 转钎压力异常</label>
-                                    <label><input type="checkbox" value="打泥量不足"> 打泥量不足</label>
-                                    <label><input type="checkbox" value="保压不足"> 保压不足</label>
-                                    <label><input type="checkbox" value="冲击未开启"> 冲击未开启</label>
-                                    <label><input type="checkbox" value="周期截断"> 周期截断</label>
-                                    <label><input type="checkbox" value="传感器抖动"> 传感器抖动</label>
-                                </div>
-                            </div>
-                            <div class="form-row" style="align-items:center">
-                                <div class="form-group" style="flex:0 0 auto">
-                                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                                        <input type="checkbox" id="lblHadIntervention"> 存在人工干预
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="form-group"><label>备注</label>
-                                <textarea id="lblNotes" placeholder="标注备注..."></textarea>
-                            </div>
-                            <div style="display:flex;gap:8px;margin-top:16px">
-                                <button class="btn btn-primary" onclick="saveLabel()" id="btnSave">保存标注</button>
-                                <button class="btn-danger" onclick="deleteLabel()" id="btnDelete" style="display:none">删除标注</button>
-                            </div>
-                        </div>
+                </div>
+                <div class="form-row" style="align-items:center">
+                    <div class="form-group" style="flex:0 0 auto">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                            <input type="checkbox" id="lblHadIntervention"> 存在人工干预
+                        </label>
                     </div>
+                </div>
+                <div class="form-group"><label>备注</label>
+                    <textarea id="lblNotes" placeholder="标注备注..."></textarea>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:16px">
+                    <button class="btn btn-primary" onclick="saveLabel()" id="btnSave">保存标注</button>
+                    <button class="btn-danger" onclick="deleteLabel()" id="btnDelete" style="display:none">删除标注</button>
                 </div>
             </div>
         </div>
-
     </div>
+</div>
 </div>
 
 <div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
@@ -377,7 +379,7 @@ function loadCycles() {
 
     selectedCycle = null;
     selectedLabel = null;
-    document.getElementById('detailCard').style.display = 'none';
+    document.getElementById('detailModal').classList.remove('show');
 
     var url = '/api/labeling/cycles?equipment_id=' + encodeURIComponent(equipmentId)
         + '&cycle_type=' + encodeURIComponent(cycleType)
@@ -486,13 +488,13 @@ function selectCycle(cycleId) {
 function closeDetail() {
     selectedCycle = null;
     selectedLabel = null;
-    document.getElementById('detailCard').style.display = 'none';
+    document.getElementById('detailModal').classList.remove('show');
 }
 
 // ========== 渲染详情面板 ==========
 function renderDetail() {
     if (!selectedCycle) return;
-    document.getElementById('detailCard').style.display = '';
+    document.getElementById('detailModal').classList.add('show');
     document.getElementById('detailTitle').textContent = (selectedCycle.equipment_id || '') + ' / ' + (selectedCycle.cycle_type === 'opening' ? '开口' : '堵口');
     var c = selectedCycle;
     var durMin = Math.floor((c.duration_s || 0) / 60);
