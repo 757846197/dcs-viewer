@@ -515,12 +515,9 @@ def api_login():
         logger.info("登录成功: user=%s", username)
         session["logged_in"] = True
         return jsonify({"ok": True, "redirect": "/"})
-    # 登录失败 — 打印掩码后的调试信息
-    masked = password[:1] + "***" + password[-1:] if len(password) > 2 else "***"
-    logger.warning(
-        "登录失败: user=%s pwd=%s pwd_len=%d user_ok=%s pwd_ok=%s expected_pwd_len=%d",
-        username, masked, len(password), user_correct, pwd_correct, len(SETTINGS_PASSWORD)
-    )
+    # 登录失败
+    logger.warning("登录失败: user=%s pwd_len=%d user_ok=%s pwd_ok=%s",
+                   username, len(password), user_correct, pwd_correct)
     return jsonify({"ok": False, "error": "账号或密码错误"})
 
 
