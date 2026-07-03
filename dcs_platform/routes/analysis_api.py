@@ -17,7 +17,9 @@ from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, ins
     get_detect_configs, get_detect_config, get_default_detect_config, \
     upsert_detect_config, toggle_detect_config, delete_detect_config, \
     get_tuning_config, update_tuning_config, get_tuning_runs, get_tuning_run, \
-    get_tuning_history, insert_tuning_run, insert_tuning_history
+    get_tuning_history, insert_tuning_run, insert_tuning_history, \
+    get_result_judge_configs, get_result_judge_config, get_default_result_config, \
+    upsert_result_judge_config, toggle_result_judge_config, delete_result_judge_config
 from dcs_platform.services.group_service import (
     get_group_params, get_param_label, get_all_groups, get_group_by_id,
 )
@@ -164,6 +166,72 @@ def api_tuning_history():
         config_id = int(config_id)
     history = get_tuning_history(config_id=config_id)
     return jsonify({"history": history, "count": len(history)})
+
+
+# ===== 判定规则配置 CRUD =====
+
+@analysis_bp.route("/result-configs")
+def api_result_configs():
+    """GET /api/analysis/result-configs?type=opening&category=success"""
+    cycle_type = request.args.get("type", "").strip() or None
+    category = request.args.get("category", "").strip() or None
+    configs = get_result_judge_configs(cycle_type=cycle_type, category=category)
+    return jsonify({"configs": configs, "count": len(configs)})
+
+
+@analysis_bp.route("/result-configs/<int:config_id>")
+def api_get_result_config(config_id):
+    c = get_result_judge_config(config_id)
+    if not c: return jsonify({"error": "不存在"}), 404
+    return jsonify({"config": c})
+
+
+@analysis_bp.route("/result-configs", methods=["POST"])
+def api_create_result_config():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    if not name: return jsonify({"error": "名称不能为空"}), 400
+    config_id = upsert_result_judge_config(
+        None, name,
+        data.get("cycle_type", "opening"),
+        data.get("category", "success"),
+        json.dumps(data.get("params", []), ensure_ascii=False),
+        data.get("logic_op", "AND"),
+        data.get("is_default", 0),
+        data.get("description", "")
+    )
+    return jsonify({"ok": True, "id": config_id})
+
+
+@analysis_bp.route("/result-configs/<int:config_id>", methods=["PUT"])
+def api_update_result_config(config_id):
+    existing = get_result_judge_config(config_id)
+    if not existing: return jsonify({"error": "不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    upsert_result_judge_config(
+        config_id,
+        data.get("name", existing["name"]),
+        existing["cycle_type"],
+        existing["category"],
+        json.dumps(data.get("params", existing["params"]), ensure_ascii=False),
+        data.get("logic_op", existing.get("logic_op", "AND")),
+        data.get("is_default", existing.get("is_default", 0)),
+        data.get("description", existing.get("description", ""))
+    )
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/result-configs/<int:config_id>/toggle", methods=["POST"])
+def api_toggle_result_config(config_id):
+    data = request.get_json(silent=True) or {}
+    toggle_result_judge_config(config_id, data.get("enabled", 1))
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/result-configs/<int:config_id>", methods=["DELETE"])
+def api_delete_result_config(config_id):
+    delete_result_judge_config(config_id)
+    return jsonify({"ok": True})
 
 
 @analysis_bp.route("/equipment")

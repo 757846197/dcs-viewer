@@ -59,6 +59,11 @@ td{padding:10px 12px;border-bottom:1px solid #f1f5f9}
 .modal .modal-body{padding:24px}
 .modal .modal-footer{padding:16px 24px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end}
 @media(max-width:768px){.sidebar{width:60px;min-width:60px}.sidebar .nav-item span{display:none}.main{margin-left:60px}}
+
+/* Tab */
+.tab-btn{padding:8px 20px;border:1px solid #e2e8f0;border-radius:8px 8px 0 0;background:#f8fafc;cursor:pointer;font-size:13px;font-weight:600;color:#64748b;transition:all .2s;border-bottom:none}
+.tab-btn.active{background:#fff;color:#1677ff;border-color:#e2e8f0 e2e8f0 #fff}
+.tab-btn:hover:not(.active){color:#1677ff;background:#f0f5ff}
 </style>
 </head>
 <body>
@@ -91,16 +96,39 @@ td{padding:10px 12px;border-bottom:1px solid #f1f5f9}
     <div class="container">
         <div id="alertBox" class="alert"></div>
 
-        <div class="card">
-            <div class="card-header">
-                检测配置列表
-                <button class="btn btn-primary" style="margin-left:auto" onclick="openAddConfig()">+ 新建配置</button>
+        <!-- Tab 导航 -->
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+            <button class="tab-btn active" id="tabDetectBtn" onclick="switchTab('detect')">检测规则配置</button>
+            <button class="tab-btn" id="tabResultBtn" onclick="switchTab('result')">判定规则配置</button>
+        </div>
+
+        <!-- Tab1: 检测配置列表 -->
+        <div id="tabDetect">
+            <div class="card" style="margin-bottom:0">
+                <div class="card-header">
+                    检测配置列表<span style="font-size:10px;color:#94a3b8;font-weight:400;margin-left:8px">信号检测规则: 遥控+阈值/边沿</span>
+                    <button class="btn btn-primary" style="margin-left:auto" onclick="openAddConfig()">+ 新建配置</button>
+                </div>
+                <div class="card-body">
+                    <table><thead><tr><th>名称</th><th>类型</th><th>规则数</th><th>默认</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+                    <tbody id="configBody"><tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px">加载中...</td></tr></tbody></table>
+                </div>
             </div>
-            <div class="card-body">
-                <table id="configTable">
-                    <thead><tr><th>名称</th><th>类型</th><th>规则数</th><th>默认</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
-                    <tbody id="configBody"><tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px">加载中...</td></tr></tbody>
-                </table>
+        </div>
+
+        <!-- Tab2: 判定规则配置 -->
+        <div id="tabResult" style="display:none">
+            <div class="card" style="margin-bottom:0">
+                <div class="card-header">
+                    判定规则配置<span style="font-size:10px;color:#94a3b8;font-weight:400;margin-left:8px">结果分类: 成功/失败/未完成</span>
+                    <select id="fResultType" onchange="loadResultConfigs()" style="margin-left:12px;padding:4px 8px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px">
+                        <option value="opening">开口</option><option value="plugging">堵口</option>
+                    </select>
+                    <button class="btn btn-primary" style="margin-left:auto" onclick="openAddResultConfig()">+ 新建</button>
+                </div>
+                <div class="card-body">
+                    <div id="resultConfigList"></div>
+                </div>
             </div>
         </div>
 
@@ -408,26 +436,162 @@ function triggerTuning(){
 }
 
 function loadTuningHistory(){
-    _api('/api/analysis/tuning/runs?limit=10').then(function(d){
-        var runs = d.runs || [];
-        var html = '';
-        runs.forEach(function(r){
-            var statusTag = r.status === 'completed' ? '<span class="tag tag-ok">完成</span>' :
-                           r.status === 'running' ? '<span class="tag" style="background:#eff6ff;color:#2563eb">运行中</span>' :
-                           '<span class="tag tag-off">失败</span>';
-            var evalR = r.eval_result || {};
-            html += '<tr>';
-            html += '<td>'+(r.cycle_type==='opening'?'开口':'堵口')+'</td>';
-            html += '<td>'+(r.run_mode==='auto'?'自动':'手动')+'</td>';
-            html += '<td>'+statusTag+'</td>';
-            html += '<td>'+(evalR.accuracy!=null?(evalR.accuracy*100).toFixed(1)+'%':'--')+'</td>';
-            html += '<td>'+(evalR.false_positive_rate!=null?(evalR.false_positive_rate*100).toFixed(1)+'%':'--')+'</td>';
-            html += '<td style="font-size:11px;color:#94a3b8">'+(r.started_at||'--')+'</td>';
-            html += '</tr>';
-        });
-        document.getElementById('tuningRunBody').innerHTML = html || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:16px">暂无记录</td></tr>';
-    }).catch(function(e){console.log('tuning history load failed:', e)});
+    // ... (keep existing)
 }
-</script>
+
+// ========== Tab 切换 ==========
+function switchTab(tab){
+    document.getElementById('tabDetect').style.display = (tab==='detect')?'':'none';
+    document.getElementById('tabResult').style.display = (tab==='result')?'':'none';
+    document.getElementById('tabDetectBtn').className = (tab==='detect')?'tab-btn active':'tab-btn';
+    document.getElementById('tabResultBtn').className = (tab==='result')?'tab-btn active':'tab-btn';
+    if(tab==='result') loadResultConfigs();
+}
+
+// ========== 判定规则配置 ==========
+var resultConfigs = [];
+
+function loadResultConfigs(){
+    var type = document.getElementById('fResultType').value;
+    _api('/api/analysis/result-configs?type='+type).then(function(d){
+        resultConfigs = d.configs || [];
+        renderResultConfigs();
+    }).catch(function(e){showAlert('加载判定配置失败: '+e.message,'error')});
+}
+
+function renderResultConfigs(){
+    var groups = {};
+    resultConfigs.forEach(function(c){
+        var key = c.category || 'other';
+        if(!groups[key]) groups[key] = [];
+        groups[key].push(c);
+    });
+    var catLabels = {success:'成功判定', fail:'失败判定', incomplete:'未完成判定', unfinished:'未完整判定'};
+    var html = '';
+    ['success','fail','incomplete','unfinished'].forEach(function(cat){
+        var items = groups[cat] || [];
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px">'+(catLabels[cat]||cat)+'</div>';
+        items.forEach(function(c){
+            var params = c.params || [];
+            var paramHtml = params.map(function(p){
+                return '<span style="font-size:11px;color:#1f2937;background:#f0f5ff;padding:2px 8px;border-radius:4px;margin:2px">'+p.label+'='+p.value+(p.unit||'')+'</span>';
+            }).join('');
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-bottom:4px">';
+            html += '<strong style="font-size:12px;min-width:120px">'+c.name+'</strong>';
+            html += '<span style="font-size:11px;color:#94a3b8">'+(c.description||c.logic_op||'')+'</span>';
+            html += '<span style="flex:1">'+paramHtml+'</span>';
+            html += '<span>'+(c.enabled?'<span class="tag tag-ok">启用</span>':'<span class="tag tag-off">停用</span>')+'</span>';
+            html += '<button class="btn-ghost" onclick="openEditResultConfig('+c.id+')">编辑</button>';
+            html += '<button class="btn-ghost" style="color:#dc2626" onclick="deleteResultConfig('+c.id+')">删除</button>';
+            html += '</div>';
+        });
+        html += '</div>';
+    });
+    document.getElementById('resultConfigList').innerHTML = html || '<div style="text-align:center;color:#94a3b8;padding:24px">暂无配置</div>';
+}
+
+function openAddResultConfig(){
+    var type = document.getElementById('fResultType').value;
+    var catLabels = {success:'成功', fail:'失败', incomplete:'未完成', unfinished:'未完整'};
+    showResultForm(null, {name:'新判定规则', cycle_type:type, category:'success', params:[
+        {param_name:'',value:0,unit:'',data_type:'float',range_min:0,range_max:100,label:'参数1',operator:'gt'}
+    ], logic_op:'AND', description:''});
+}
+
+function openEditResultConfig(id){
+    var c = resultConfigs.find(function(x){return x.id===id});
+    if(c) showResultForm(id, JSON.parse(JSON.stringify(c)));
+}
+
+function showResultForm(id, cfg){
+    var html = '<div class="modal-overlay show" onclick="if(event.target===this)closeResultForm()"><div class="modal">';
+    html += '<div class="modal-header">'+(id?'编辑':'新建')+'判定规则<button class="btn-ghost" style="margin-left:auto" onclick="closeResultForm()">x</button></div>';
+    html += '<div class="modal-body">';
+    html += '<div class="form-row"><div class="form-group"><label>名称</label><input id="rfName" value="'+cfg.name+'"></div>';
+    html += '<div class="form-group" style="flex:0 0 130px"><label>分类</label><select id="rfCategory">';
+    ['success','fail','incomplete','unfinished'].forEach(function(c){
+        html += '<option value="'+c+'"'+(cfg.category===c?' selected':'')+'>'+({success:'成功',fail:'失败',incomplete:'未完成',unfinished:'未完整'})[c]+'</option>';
+    });
+    html += '</select></div></div>';
+    html += '<div class="form-group" style="margin-bottom:12px"><label>描述</label><input id="rfDesc" value="'+(cfg.description||'')+'"></div>';
+    html += '<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px">参数列表 <button class="btn btn-sm btn-primary" onclick="addResultParam()">+ 添加</button></div>';
+    html += '<div id="rfParams" style="max-height:280px;overflow-y:auto"></div>';
+    html += '<div class="form-row" style="margin-top:8px"><div class="form-group" style="flex:0 0 100px"><label>逻辑</label><select id="rfLogic"><option value="AND"'+(cfg.logic_op==='AND'?' selected':'')+'>AND</option><option value="OR"'+ (cfg.logic_op==='OR'?' selected':'')+'>OR</option></select></div>';
+    html += '<div class="form-group"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rfEnabled"'+(cfg.enabled!==0?' checked':'')+'> 已启用</label></div></div>';
+    html += '</div><div class="modal-footer">';
+    html += '<button class="btn btn-ghost" onclick="closeResultForm()">取消</button>';
+    html += '<button class="btn btn-primary" onclick="saveResultConfig('+(id||0)+')">保存</button>';
+    html += '</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+    window._rfCfg = cfg;
+    window._rfId = id;
+    renderResultParams();
+}
+
+function renderResultParams(){
+    var pdiv = document.getElementById('rfParams');
+    if(!pdiv) return;
+    var params = window._rfCfg ? (window._rfCfg.params || []) : [];
+    var html = '';
+    params.forEach(function(p,i){
+        html += '<div class="rule-item">';
+        html += '<span>#'+(i+1)+'</span>';
+        html += '<div class="form-group" style="flex:1;min-width:100px"><label>参数名</label><input value="'+(p.param_name||'')+'" onchange="window._rfCfg.params['+i+'].param_name=this.value"></div>';
+        html += '<div class="form-group" style="flex:1;min-width:100px"><label>显示名</label><input value="'+(p.label||'')+'" onchange="window._rfCfg.params['+i+'].label=this.value"></div>';
+        html += '<div class="form-group" style="flex:0 0 80px"><label>值</label><input type="number" step="0.01" value="'+p.value+'" onchange="window._rfCfg.params['+i+'].value=parseFloat(this.value)||0"></div>';
+        html += '<div class="form-group" style="flex:0 0 60px"><label>单位</label><input value="'+(p.unit||'')+'" onchange="window._rfCfg.params['+i+'].unit=this.value"></div>';
+        html += '<button class="btn-ghost" style="color:#dc2626;margin-top:16px" onclick="removeResultParam('+i+')">x</button>';
+        html += '</div>';
+    });
+    pdiv.innerHTML = html || '<div style="text-align:center;color:#94a3b8;padding:12px">暂无参数</div>';
+}
+
+function addResultParam(){
+    if(!window._rfCfg) return;
+    if(!window._rfCfg.params) window._rfCfg.params = [];
+    window._rfCfg.params.push({param_name:'',value:0,unit:'',data_type:'float',range_min:0,range_max:100,label:'',operator:'gt'});
+    renderResultParams();
+}
+
+function removeResultParam(i){
+    if(!window._rfCfg||!window._rfCfg.params) return;
+    window._rfCfg.params.splice(i,1);
+    renderResultParams();
+}
+
+function closeResultForm(){
+    var overlay = document.querySelector('.modal-overlay.show');
+    if(overlay) overlay.remove();
+}
+
+function saveResultConfig(id){
+    var name = document.getElementById('rfName').value.trim();
+    if(!name){showAlert('请输入名称','error');return}
+    var params = window._rfCfg ? (window._rfCfg.params || []) : [];
+    var body = {
+        name: name,
+        cycle_type: document.getElementById('fResultType').value,
+        category: document.getElementById('rfCategory').value,
+        params: params,
+        logic_op: document.getElementById('rfLogic').value,
+        description: document.getElementById('rfDesc').value,
+        is_default: 0
+    };
+    var url = id ? '/api/analysis/result-configs/'+id : '/api/analysis/result-configs';
+    var method = id ? 'PUT' : 'POST';
+    _api(url, {method:method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+        .then(function(){closeResultForm();loadResultConfigs();showAlert('保存成功','ok')})
+        .catch(function(e){showAlert('保存失败: '+e.message,'error')});
+}
+
+function deleteResultConfig(id){
+    if(!confirm('确认删除？')) return;
+    _api('/api/analysis/result-configs/'+id, {method:'DELETE'})
+        .then(function(){loadResultConfigs();showAlert('已删除','ok')})
+        .catch(function(e){showAlert('删除失败: '+e.message,'error')});
+}
+
+loadTuningHistory();
 </body>
 </html>

@@ -175,10 +175,25 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now'))
         );
 
+        -- 判定规则配置（结果分类: 成功/失败/未完成/未完整）
+        CREATE TABLE IF NOT EXISTS result_judge_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,                    -- 配置名称
+            cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
+            category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished')),
+            description TEXT DEFAULT '',            -- 判定条件描述
+            params_json TEXT NOT NULL,              -- [{param_name, value, unit, data_type, range_min, range_max}]
+            logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
+            enabled INTEGER DEFAULT 1,
+            is_default INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
         -- 自整定运行记录
         CREATE TABLE IF NOT EXISTS tuning_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            config_id INTEGER REFERENCES detect_configs(id),
+            config_id INTEGER,                    -- result_judge_configs.id (判定规则)
             cycle_type TEXT NOT NULL,
             status TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
             run_mode TEXT DEFAULT 'auto' CHECK(run_mode IN ('auto','manual')),
@@ -639,6 +654,124 @@ def delete_detect_config(config_id):
 #  自整定 CRUD
 # ===================================================================
 
+# ===================================================================
+#  判定规则配置 CRUD
+# ===================================================================
+
+_DEFAULT_RESULT_PARAMS = {
+    "opening": {
+        "success": {"name": "开口成功判定", "logic": "AND", "params": [
+            {"param_name": "push_pos_change", "value": 0.1, "unit": "m", "data_type": "float",
+             "range_min": 0.01, "range_max": 0.5, "label": "推进位移骤增阈值", "operator": "gt"},
+            {"param_name": "push_press_drop_ratio", "value": 0.2, "unit": "%", "data_type": "float",
+             "range_min": 0.05, "range_max": 0.5, "label": "压力骤降阈值", "operator": "gt"},
+        ]},
+        "fail": {"name": "开口失败判定", "logic": "AND", "params": [
+            {"param_name": "no_effective_drill", "value": 1, "unit": "", "data_type": "bool",
+             "range_min": 0, "range_max": 1, "label": "无有效钻进位移", "operator": "eq"},
+        ]},
+        "incomplete": {"name": "开口未完成判定", "logic": "AND", "params": [
+            {"param_name": "has_drill_no_breakthrough", "value": 1, "unit": "", "data_type": "bool",
+             "range_min": 0, "range_max": 1, "label": "有钻进但未钻透", "operator": "eq"},
+        ]},
+    },
+    "plugging": {
+        "success": {"name": "堵口成功判定", "logic": "AND", "params": [
+            {"param_name": "mud_qty_min", "value": 100, "unit": "kg", "data_type": "float",
+             "range_min": 50, "range_max": 500, "label": "打泥量达标值", "operator": "gte"},
+            {"param_name": "hold_duration_min", "value": 60, "unit": "s", "data_type": "int",
+             "range_min": 30, "range_max": 300, "label": "保压时间下限", "operator": "gte"},
+        ]},
+        "fail": {"name": "堵口失败判定", "logic": "AND", "params": [
+            {"param_name": "mud_qty_below_min", "value": 1, "unit": "", "data_type": "bool",
+             "range_min": 0, "range_max": 1, "label": "打泥量未达标", "operator": "eq"},
+        ]},
+        "unfinished": {"name": "堵口未完整判定", "logic": "AND", "params": [
+            {"param_name": "mud_done_hold_short", "value": 1, "unit": "", "data_type": "bool",
+             "range_min": 0, "range_max": 1, "label": "打泥完成但保压不足", "operator": "eq"},
+        ]},
+    }
+}
+
+def get_result_judge_configs(cycle_type=None, category=None):
+    q = "SELECT * FROM result_judge_configs WHERE 1=1"
+    args = []
+    if cycle_type:
+        q += " AND cycle_type=?"; args.append(cycle_type)
+    if category:
+        q += " AND category=?"; args.append(category)
+    q += " ORDER BY cycle_type, category"
+    rows = _get_conn().execute(q, args).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try: d["params"] = json.loads(d["params_json"])
+        except: d["params"] = []
+        del d["params_json"]
+        result.append(d)
+    return result
+
+def get_result_judge_config(config_id):
+    r = _get_conn().execute("SELECT * FROM result_judge_configs WHERE id=?", (config_id,)).fetchone()
+    if not r: return None
+    d = dict(r)
+    try: d["params"] = json.loads(d["params_json"])
+    except: d["params"] = []
+    del d["params_json"]
+    return d
+
+def get_default_result_config(cycle_type, category):
+    r = _get_conn().execute(
+        "SELECT * FROM result_judge_configs WHERE cycle_type=? AND category=? AND is_default=1 AND enabled=1 LIMIT 1",
+        (cycle_type, category)).fetchone()
+    if r:
+        d = dict(r)
+        try: d["params"] = json.loads(d["params_json"])
+        except: d["params"] = []
+        del d["params_json"]
+        return d
+    # 首次访问自动创建默认配置
+    defaults = _DEFAULT_RESULT_PARAMS.get(cycle_type, {}).get(category)
+    if defaults:
+        config_id = upsert_result_judge_config(
+            None, defaults["name"], cycle_type, category,
+            json.dumps(defaults["params"], ensure_ascii=False),
+            defaults.get("logic", "AND"), is_default=1
+        )
+        return get_result_judge_config(config_id)
+    return None
+
+def upsert_result_judge_config(config_id, name, cycle_type, category, params_json, logic_op="AND", is_default=0, description=""):
+    conn = _get_conn()
+    if config_id:
+        conn.execute(
+            "UPDATE result_judge_configs SET name=?,params_json=?,logic_op=?,is_default=?,description=?,updated_at=datetime('now') WHERE id=?",
+            (name, params_json, logic_op, is_default, description, config_id))
+        conn.commit()
+        return config_id
+    c = conn.execute(
+        "INSERT INTO result_judge_configs(name,cycle_type,category,params_json,logic_op,is_default,description) VALUES(?,?,?,?,?,?,?)",
+        (name, cycle_type, category, params_json, logic_op, is_default, description))
+    conn.commit()
+    return c.lastrowid
+
+def toggle_result_judge_config(config_id, enabled):
+    _get_conn().execute("UPDATE result_judge_configs SET enabled=?,updated_at=datetime('now') WHERE id=?", (enabled, config_id))
+    _get_conn().commit()
+
+def delete_result_judge_config(config_id):
+    _get_conn().execute("DELETE FROM result_judge_configs WHERE id=?", (config_id,))
+    _get_conn().commit()
+
+def seed_default_result_configs():
+    """初始化默认判定规则（已存在则跳过）"""
+    existing = get_result_judge_configs()
+    if existing:
+        return
+    for cycle_type in ("opening", "plugging"):
+        for category in _DEFAULT_RESULT_PARAMS[cycle_type]:
+            get_default_result_config(cycle_type, category)
+
 def get_tuning_config():
     r = _get_conn().execute("SELECT * FROM tuning_config WHERE id=1").fetchone()
     return dict(r) if r else {"auto_mode": 1, "schedule_hour": 2, "eval_min_samples": 10, "min_accuracy": 0.7, "max_false_rate": 0.15}
@@ -716,3 +849,4 @@ def get_tuning_history(config_id=None, limit=50):
     return [dict(r) for r in _get_conn().execute(q, args).fetchall()]
 
 init_db()
+seed_default_result_configs()

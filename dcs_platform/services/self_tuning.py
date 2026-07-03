@@ -12,8 +12,9 @@ from typing import Optional
 
 from dcs_platform.core.db import (
     get_tuning_config, insert_tuning_run, update_tuning_run,
-    insert_tuning_history, get_default_detect_config,
-    upsert_detect_config, get_detect_config, get_cycles,
+    insert_tuning_history, get_cycles,
+    get_result_judge_configs, get_result_judge_config, get_default_result_config,
+    upsert_result_judge_config,
 )
 from dcs_platform.core.influx_client import fetch_timeseries
 
@@ -35,7 +36,7 @@ PLUGGING_SIGNALS = {
 
 
 def run_self_tuning(cycle_type: str = "opening", run_mode: str = "auto") -> dict:
-    """执行完整自整定流程。
+    """执行完整自整定流程 — 针对判定规则参数微调。
 
     Args:
         cycle_type: "opening" | "plugging"
@@ -44,9 +45,7 @@ def run_self_tuning(cycle_type: str = "opening", run_mode: str = "auto") -> dict
     Returns:
         {run_id, status, ...}
     """
-    config = get_default_detect_config(cycle_type)
-    config_id = config["id"] if config else None
-    run_id = insert_tuning_run(config_id, cycle_type, run_mode)
+    run_id = insert_tuning_run(None, cycle_type, run_mode)
 
     try:
         # Step 1: 数据采集
@@ -54,32 +53,28 @@ def run_self_tuning(cycle_type: str = "opening", run_mode: str = "auto") -> dict
         collect_result = _collect_data(cycle_type)
         update_tuning_run(run_id, collect_stats=collect_result)
 
-        # Step 2: 数据预处理 + 特征提取
+        # Step 2: 数据分析
         logger.info("[Tuning %s] Step 2/5: 数据分析", run_id)
         analysis_result = _analyze_signals(cycle_type, collect_result)
         update_tuning_run(run_id, analysis_result=analysis_result)
 
-        # Step 3: 参数自整定
+        # Step 3: 推导判定参数建议
         logger.info("[Tuning %s] Step 3/5: 参数推导", run_id)
-        tuned_params = _derive_params(cycle_type, analysis_result, collect_result)
+        tuned_params = _derive_judge_params(cycle_type, analysis_result, collect_result)
         update_tuning_run(run_id, tuned_params=tuned_params)
 
-        # Step 4: 写入配置并记录变更
-        _apply_params(config_id, cycle_type, tuned_params, run_id)
+        # Step 4: 应用参数 (微调 result_judge_configs)
+        _apply_judge_params(cycle_type, tuned_params, run_id)
 
-        # Step 5: 准确率评估
+        # Step 5: 评估
         logger.info("[Tuning %s] Step 5/5: 准确率评估", run_id)
         eval_result = _evaluate_accuracy(cycle_type, tuned_params, collect_result)
         update_tuning_run(run_id, eval_result=eval_result)
 
-        # 判断是否达到准确率门槛
         tuning_cfg = get_tuning_config()
-        min_acc = tuning_cfg.get("min_accuracy", 0.7)
         acc = eval_result.get("accuracy", 0)
-        status = "completed" if acc >= min_acc else "failed"
+        status = "completed" if acc >= tuning_cfg.get("min_accuracy", 0.7) else "failed"
         update_tuning_run(run_id, status=status, finished_at=datetime.now(LOCAL_TZ).isoformat())
-
-        logger.info("[Tuning %s] 完成: status=%s accuracy=%.2f", run_id, status, acc)
         return {"run_id": run_id, "status": status, "accuracy": acc}
 
     except Exception as e:
@@ -226,123 +221,72 @@ def _analyze_remote_pattern(values, feat, patterns, machine, param):
 #  Step 3: 参数自整定
 # ==============================
 
-def _derive_params(cycle_type: str, analysis: dict, collect: dict) -> dict:
-    """根据分析结果自动推导检测规则参数。
-
-    参数推导规则:
-    - 穿越阈值: 取穿越模式中出现频率最高的阈值
-    - 遥控容差: 根据信号采样率动态计算 (基础2s → 采样率低时加大)
-    - 最短周期: 取信号活跃比 * 3600s 的合理区间
-    - 最长周期: 固定3600s
+def _derive_judge_params(cycle_type: str, analysis: dict, collect: dict) -> dict:
+    """根据数据分析结果推导判定规则参数的微调建议。
+    
+    仅调整数值型参数（阈值、百分比），不改变判定逻辑结构。
     """
-    patterns = analysis.get("patterns", {})
     features = {f["param"]: f for f in analysis.get("features", [])}
+    suggestions = {}
 
-    # 推导穿越阈值
-    crossing_threshold = 90  # 默认
-    if f"{cycle_type}_crossing" in str(patterns):
-        for k, v in patterns.items():
-            if "crossing" in k and "best_threshold" in v:
-                crossing_threshold = v["best_threshold"]
-                break
-
-    # 推导遥控容差 (根据采样密度)
-    tolerance = 2
-    total_pts = collect.get("total_points", 0)
-    if total_pts > 50000:
-        tolerance = 1  # 高密度: 1s
-    elif total_pts < 5000:
-        tolerance = 5  # 低密度: 5s
-
-    # 推导周期过滤范围
-    filter_min = 30
-    filter_max = 3600
-    remote_ratio = 0.1
-    for k, v in patterns.items():
-        if "remote" in k and "active_ratio" in v:
-            remote_ratio = max(remote_ratio, v["active_ratio"])
-
-    if remote_ratio > 0.5:
-        filter_min = 15  # 频繁作业: 放宽下限
-    elif remote_ratio < 0.05:
-        filter_min = 60  # 低频作业: 收紧下限
-
-    # 构建规则
-    rules = []
     if cycle_type == "opening":
-        remote_sig = "LT_LQFC_57"
-        crossing_sig = "LT_LQFC_63"
-        rules = [
-            {"signal": remote_sig, "role": "remote", "label": "遥控选择"},
-            {"signal": crossing_sig, "role": "crossing", "label": "回转位置",
-             "threshold": crossing_threshold, "tolerance_s": tolerance},
-        ]
+        # 推进位移阈值: 取 P50 的 1.5 倍（代表显著变化）
+        push_keys = [k for k in features if "67" in k or "104" in k]
+        if push_keys:
+            f = features[push_keys[0]]
+            suggestions["push_pos_change"] = {"param_name": "push_pos_change",
+                "label": "推进位移骤增阈值", "suggested": round(f["p50"] * 1.5, 3) if f["p50"] > 0 else 0.1,
+                "current": 0.1, "unit": "m", "reason": f"基于历史位移P50={f['p50']:.3f}m"}
+        # 压力骤降阈值: 取 std/mean 比
+        press_keys = [k for k in features if "68" in k or "105" in k]
+        if press_keys:
+            f = features[press_keys[0]]
+            ratio = min(0.5, max(0.1, f["std"] / max(1, f["mean"])))
+            suggestions["push_press_drop_ratio"] = {"param_name": "push_press_drop_ratio",
+                "label": "压力骤降阈值", "suggested": round(ratio, 2),
+                "current": 0.2, "unit": "%", "reason": f"基于压力波动std/mean={ratio:.2f}"}
+
     else:
-        remote_sig = "LT_LQFC_130"
-        edge_sig = "LT_LQFC_134"
-        rules = [
-            {"signal": remote_sig, "role": "remote", "label": "遥控启动"},
-            {"signal": edge_sig, "role": "edge", "label": "打泥指令",
-             "edge_dir": "rising", "tolerance_s": tolerance},
-        ]
+        # 堵口: 打泥量达标值
+        mud_keys = [k for k in features if "179" in k or "180" in k]
+        if mud_keys:
+            f = features[mud_keys[0]]
+            suggested = max(50, round(f["p90"] * 0.8))
+            suggestions["mud_qty_min"] = {"param_name": "mud_qty_min",
+                "label": "打泥量达标值", "suggested": suggested,
+                "current": 100, "unit": "kg", "reason": f"基于历史P90={f['p90']:.0f}kg"}
+        # 保压时间
+        suggestions["hold_duration_min"] = {"param_name": "hold_duration_min",
+            "label": "保压时间下限", "suggested": 60,
+            "current": 60, "unit": "s", "reason": "保持默认"}
 
-    return {
-        "type": cycle_type,
-        "rules": rules,
-        "filter_min_s": filter_min,
-        "filter_max_s": filter_max,
-        "_derived_from": {
-            "crossing_threshold": crossing_threshold,
-            "tolerance": tolerance,
-            "remote_ratio": remote_ratio,
-        },
-    }
+    return {"type": cycle_type, "suggestions": suggestions}
 
 
-# ==============================
-#  Step 4: 参数应用
-# ==============================
-
-def _apply_params(config_id, cycle_type, tuned_params, run_id):
-    """将整定出的参数写入 detect_configs，记录变更历史。"""
-    if not config_id:
-        return
-
-    old_config = get_detect_config(config_id)
-    old_cfg = old_config.get("config", {}) if old_config else {}
-
-    # 记录每条规则的变更
-    old_rules = {r.get("signal"): r for r in (old_cfg.get("rules", []) or [])}
-    new_rules = {r.get("signal"): r for r in (tuned_params.get("rules", []) or [])}
-
-    for sig, new_rule in new_rules.items():
-        old_rule = old_rules.get(sig, {})
-        if old_rule:
-            for key in ("threshold", "tolerance_s"):
-                old_val = old_rule.get(key)
-                new_val = new_rule.get(key)
-                if old_val != new_val and new_val is not None:
-                    insert_tuning_history(config_id, run_id, f"{sig}.{key}",
-                                          str(old_val), str(new_val), "auto_tuning")
-
-    # 记录过滤参数变更
-    if old_cfg.get("filter_min_s") != tuned_params.get("filter_min_s"):
-        insert_tuning_history(config_id, run_id, "filter_min_s",
-                              str(old_cfg.get("filter_min_s", 30)),
-                              str(tuned_params["filter_min_s"]), "auto_tuning")
-    if old_cfg.get("filter_max_s") != tuned_params.get("filter_max_s"):
-        insert_tuning_history(config_id, run_id, "filter_max_s",
-                              str(old_cfg.get("filter_max_s", 3600)),
-                              str(tuned_params["filter_max_s"]), "auto_tuning")
-
-    # 保存新配置
-    name = f"{'开口' if cycle_type == 'opening' else '堵口'}检测(自整定)"
-    upsert_detect_config(
-        config_id, name, cycle_type,
-        json.dumps({k: v for k, v in tuned_params.items() if not k.startswith("_")},
-                   ensure_ascii=False),
-        f"AI 自整定于 {datetime.now(LOCAL_TZ).strftime('%m-%d %H:%M')}", is_default=1
-    )
+def _apply_judge_params(cycle_type, tuned_params, run_id):
+    """将整定建议值写入 result_judge_configs，记录变更历史。"""
+    suggestions = tuned_params.get("suggestions", {})
+    configs = get_result_judge_configs(cycle_type=cycle_type)
+    
+    for param_key, suggestion in suggestions.items():
+        suggested_val = suggestion["suggested"]
+        for config in configs:
+            params = config.get("params", [])
+            for p in params:
+                if p.get("param_name") == param_key:
+                    old_val = p["value"]
+                    if abs(old_val - suggested_val) < 0.001:
+                        continue
+                    p["value"] = suggested_val
+                    upsert_result_judge_config(
+                        config["id"], config["name"], cycle_type, config["category"],
+                        json.dumps(params, ensure_ascii=False),
+                        config.get("logic_op", "AND"), config.get("is_default", 0),
+                        config.get("description", "")
+                    )
+                    insert_tuning_history(None, run_id, f"result_judge/{param_key}",
+                                          str(old_val), str(suggested_val), "auto_tuning")
+                    break
 
 
 # ==============================
