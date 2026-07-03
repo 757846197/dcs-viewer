@@ -126,6 +126,11 @@ def api_cycles():
     cycle_type = request.args.get("type", "all")
     limit = int(request.args.get("limit", 200))
     
+    # Normalize time format: frontend sends "2026-07-03T00:00" (no seconds/Z)
+    # Flux requires RFC3339: "2026-07-03T00:00:00Z"
+    start = _normalize_time(start)
+    end = _normalize_time(end)
+    
     # ── 正确信号配置 ──
     # 开口机: remote(binary 0/1) + swing_pos(穿越90°阈值)
     # 堵口机: remote_start(binary 0/1) + mud_cmd(边沿)
@@ -289,6 +294,22 @@ def api_cycles():
         "count": len(cycles),
         "saved_to_db": saved_count
     })
+
+
+def _normalize_time(time_str):
+    """Normalize time to RFC3339 UTC: '2026-07-03T00:00' -> '2026-07-03T00:00:00Z'"""
+    if not time_str:
+        return time_str
+    # Already has seconds + timezone
+    if "Z" in time_str or "+" in time_str[-6:]:
+        return time_str
+    # Has seconds but no timezone: add Z
+    if len(time_str) >= 19 and time_str[10] == 'T':
+        return time_str + "Z"
+    # No seconds: "2026-07-03T00:00" -> "2026-07-03T00:00:00Z"
+    if "T" in time_str:
+        return time_str + ":00Z"
+    return time_str
 
 
 def _build_time_map(pairs):
