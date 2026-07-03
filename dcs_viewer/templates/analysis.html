@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>炉前作业分析 — DCS</title>
+<script src="/static/lib/chart.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+
+.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
+.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
+.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
+.nav-section { padding: 12px 0; }
+.nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
+.nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
+.nav-item .badge-dim { margin-left: auto; font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 500; }
+.nav-item .badge-dim.swing { background: rgba(22,119,255,0.2); color: #91caff; }
+.nav-item .badge-dim.push { background: rgba(82,196,26,0.2); color: #b7eb8f; }
+.nav-item .badge-dim.mud { background: rgba(250,173,20,0.2); color: #ffe58f; }
+.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
+.sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
+
+.main { margin-left: 220px; flex: 1; min-height: 100vh; }
+.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
+.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.header .badge { background: linear-gradient(135deg, #faad14, #d48806); color: #fff; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
+.header .breadcrumb { font-size: 12px; color: #94a3b8; }
+.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
+.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
+.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
+.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
+.container { padding: 24px 32px; }
+
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 20px; margin-bottom: 20px; }
+.stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
+.stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
+.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
+.stat-card .stat-detail { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+
+.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
+.card-body { padding: 24px; }
+.card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
+.state-block { display:inline-block;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;cursor:default;position:relative }
+.state-block.standby { background:#dbeafe;color:#1d4ed8 }
+.state-block.working { background:#dcfce7;color:#166534 }
+.state-block.fault { background:#fee2e2;color:#991b1b }
+.state-block.maintenance { background:#fef3c7;color:#92400e }
+.state-block.offline { background:#f1f5f9;color:#64748b }
+.model-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700 }
+.model-badge.A { background:#dcfce7;color:#166534 }
+.model-badge.B { background:#dbeafe;color:#1d4ed8 }
+.model-badge.C { background:#fef9c3;color:#854d0e }
+.model-badge.D { background:#fee2e2;color:#991b1b }
+.phase-bar { display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px;gap:1px }
+.phase-seg { height:100% }
+.phase-seg.approach { background:#94a3b8 }
+.phase-seg.initial_drill { background:#60a5fa }
+.phase-seg.steady_drill { background:#3b82f6 }
+.phase-seg.breakthrough { background:#f59e0b }
+.phase-seg.retract { background:#10b981 }
+.phase-seg.mud_fill { background:#a78bfa }
+.phase-seg.pressure_hold { background:#8b5cf6 }
+.phase-seg.unknown { background:#e2e8f0 }
+.model-panel { background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden }
+.model-panel-header { padding:14px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;color:#0f172a }
+.rec-card { background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:12px 16px }
+.rec-card .rec-title { font-size:11px;color:#0369a1;margin-bottom:4px }
+.rec-card .rec-value { font-size:24px;font-weight:700;color:#0c4a6e }
+.rec-card .rec-unit { font-size:11px;color:#0369a1;font-weight:400 }
+.rec-card .rec-reason { font-size:10px;color:#64748b;margin-top:4px }
+.state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
+
+.filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: column; gap: 5px; }
+.filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
+.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; min-width: 130px; }
+.filter-group input:focus, .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+
+.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
+.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
+.btn-primary:disabled { background: #b0c4de; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
+.btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
+.btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; text-decoration: none; }
+.btn-ghost:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: #f8fafc; font-weight: 600; text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; border-bottom: 1px solid #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; }
+td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+tr:hover { background: #f8fafc; }
+
+.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; display: inline-block; }
+.tag-ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.tag-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.tag-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.tag-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+.loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
+.loading-overlay.show { display: flex; }
+.loading-box { background: #fff; padding: 32px 48px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+.spinner { width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s cubic-bezier(0.4,0,0.2,1) infinite; margin: 0 auto 16px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.chart-area { min-height: 400px; position: relative; }
+.empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
+.empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
+.empty-state p { font-size: 12px; }
+
+.alert { padding: 12px 20px; border-radius: 12px; margin-bottom: 16px; font-size: 13px; display: none; }
+.alert-error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
+.alert-info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
+
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
+
+@media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar .nav-item span, .sidebar .nav-section-title, .sidebar .badge-dim { display: none; }
+    .main { margin-left: 60px; }
+    .filter-bar { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>DCS 分析平台</h2>
+        <div class="version">GBDT-MPC-PID 三级架构</div>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">分析功能</div>
+        <a class="nav-item" href="javascript:switchOpType('opening')" id="navOpening">开口作业分析</a>
+        <a class="nav-item" href="javascript:switchOpType('plugging')" id="navPlugging">堵口作业分析</a>
+        <a class="nav-item" href="javascript:switchOpType('all')" id="navAll">全部作业</a>
+    </div>
+
+    <div class="nav-section" id="dimSectionOpening">
+        <div class="nav-section-title">信号维度 — 开口</div>
+        <a class="nav-item" href="javascript:filterDim('push')">推进系统 <span class="badge-dim push">位移/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('swing')">回转系统 <span class="badge-dim swing">角度/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('drill')">转钎系统</a>
+        <a class="nav-item" href="javascript:filterDim('impact')">冲击系统</a>
+        <a class="nav-item" href="javascript:filterDim('tilt')">倾动系统</a>
+        <a class="nav-item" href="javascript:filterDim('hydraulic')">液压站</a>
+    </div>
+
+    <div class="nav-section" id="dimSectionPlugging" style="display:none">
+        <div class="nav-section-title">信号维度 — 堵口</div>
+        <a class="nav-item" href="javascript:filterDim('mud')">打泥系统 <span class="badge-dim mud">量/压力</span></a>
+        <a class="nav-item" href="javascript:filterDim('cannon')">转炮/退炮</a>
+        <a class="nav-item" href="javascript:filterDim('retreat')">退泥回路</a>
+        <a class="nav-item" href="javascript:filterDim('hydraulic_p')">液压站</a>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">数据操作</div>
+        <a class="nav-item" href="javascript:exportResult()">导出 Excel</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span><a style="margin-left:auto;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.45);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a>
+    </div>
+</div>
+
+<div class="main">
+
+    <div class="header">
+        <h1>炉前作业分析</h1>
+        <span class="badge">GBDT-MPC-PID</span>
+        <span class="breadcrumb" id="pageDesc">周期识别 · 阶段标注 · 指标提取</span>
+        
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis" class="active">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base">知识库</a>
+        </div>
+    </div>
+
+    <div class="container">
+
+        <div id="alertBox" class="alert"></div>
+
+        <div class="filter-bar">
+            <div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
+            <div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
+            <div class="filter-group"><label>作业类型</label>
+                <select id="dType" onchange="switchOpType(this.value)"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+            </div>
+            <div class="filter-group"><label>设备</label>
+                <select id="dMachine"><option value="all">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
+            <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
+            <button class="btn" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff" onclick="runModelAnalysis()" id="btnModel">智能分析</button>
+            <span id="queryTimeRange" style="margin-left:auto;font-size:12px;color:#64748b;white-space:nowrap">--</span>
+        </div>
+
+        <div class="stats-row" id="statsRow"></div>
+
+        <div class="card" id="stateTimelineCard" style="display:none">
+            <div class="card-header"><span class="dot-indicator" style="background:#8b5cf6"></span>设备状态时间线</div>
+            <div class="card-body" id="stateTimeline" style="max-height:200px;overflow-y:auto;padding:12px 24px">
+                <div id="stateTimelineContent" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
+            </div>
+        </div>
+
+
+        <div style="display:flex;gap:16px;margin-bottom:16px">
+            <div class="card" style="flex:1;margin-bottom:0">
+                <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">
+                    关键指标说明 <span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:8px">点击展开</span>
+                </div>
+                <div class="card-body" style="display:none;font-size:12px;line-height:1.8;color:#475569">
+                    <table style="font-size:11px"><thead><tr><th style="width:110px">指标</th><th>含义</th></tr></thead><tbody>
+                    <tr><td style="font-weight:600">钻进位移</td><td>开口小车推进位置变化量（终点-起点），反映开口深度</td></tr>
+                    <tr><td style="font-weight:600">推进压力峰值</td><td>推进进油压力在窗口内最大值（MPa），反映钻进阻力</td></tr>
+                    <tr><td style="font-weight:600">转钎压力峰值</td><td>转钎进油压力在窗口内最大值（MPa），反映钻杆扭矩</td></tr>
+                    <tr><td style="font-weight:600">冲击状态</td><td>冲击进油压力是否激活（>0.5MPa），反映冲击锤状态</td></tr>
+                    <tr><td style="font-weight:600">打泥量</td><td>打泥累计值，反映注入铁口的炮泥总量</td></tr>
+                    <tr><td style="font-weight:600">打泥压力峰值</td><td>打泥压力窗口内最大值（MPa），19-21MPa为合理</td></tr>
+                    <tr><td style="font-weight:600">耗时</td><td>触发到结束完整时长（根据实际位移/压力动态判定）</td></tr>
+                    </tbody></table>
+                </div>
+            </div>
+            <div class="card" style="flex:1;margin-bottom:0">
+                <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">
+                    结果判定说明 <span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:8px">点击展开</span>
+                </div>
+                <div class="card-body" style="display:none;font-size:12px;line-height:1.8;color:#475569">
+                    <table style="font-size:11px"><thead><tr><th style="width:70px">结果</th><th>判定条件</th></tr></thead><tbody>
+                    <tr><td><span class="tag tag-ok">成功</span></td><td>开口：推进位移骤增(>0.1m)且压力骤降(>20%)；堵口：打泥量达标+保压≥60s</td></tr>
+                    <tr><td><span class="tag tag-fail">失败</span></td><td>开口：无有效钻进位移；堵口：打泥量未达标</td></tr>
+                    <tr><td><span class="tag tag-warn">未完成</span></td><td>开口：有钻进但未检测到钻透信号</td></tr>
+                    <tr><td><span class="tag tag-info">未完整</span></td><td>堵口：打泥完成但保压不足</td></tr>
+                    </tbody></table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span> <span style="font-size:10px;color:#94a3b8;margin-left:8px">点击折叠</span></div>
+            <div class="card-body" style="overflow-x:auto">
+                <div id="cycleEmpty" class="empty-state"><h3>选择时间范围</h3><p>点击「开始分析」自动识别开口和堵口作业周期，按GBDT-MPC-PID协议分类</p></div>
+                <table id="cycleTable" style="display:none">
+                    <thead><tr>
+                        <th>设备</th><th>类型</th><th>触发时间</th><th>作业窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
+                    </tr></thead>
+                    <tbody id="cycleBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card" id="detailCard" style="display:none">
+            <div class="card-header">作业详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span></div>
+            <div class="card-body">
+                <div id="detailMetrics" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
+                <div class="chart-area"><canvas id="detailChart"></canvas></div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var globalCycles = [];
+var chartInst = null;
+var PARAM_CONFIG = {{ groups_json | safe }};
+var _currentDimFilter = null;
+var _currentOpType = 'all';
+
+function getLabelMap(){
+    var labels = {};
+    (PARAM_CONFIG.groups || []).forEach(function(g){
+        if(g.labels) Object.assign(labels, g.labels);
+    });
+    if(PARAM_CONFIG.labels) Object.assign(labels, PARAM_CONFIG.labels);
+    return labels;
+}
+
+function fmtLocalDT(d){
+    var p = function(n){return String(n).padStart(2,'0');};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
+function initDates(){
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    document.getElementById('dStart').value = fmtLocalDT(today);
+    document.getElementById('dEnd').value = fmtLocalDT(now);
+    document.getElementById('queryTimeRange').textContent = '--';
+}
+initDates();
+
+function checkLogin(){
+    fetch('/api/user?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        if(!d.logged_in){window.location.href='/';}
+        if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};
+    }).catch(function(e){console.log('Auth check failed, redirecting:', e);window.location.href='/';});
+}
+checkLogin();
+
+function checkInfluxDB(){
+    fetch('/api/analysis/ping?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        var el=document.getElementById('sysStatus');
+        if(d.reachable){el.style.background='#52c41a';el.style.boxShadow='0 0 4px rgba(82,196,26,0.5)';}
+        else{el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';showAlert('InfluxDB unreachable: '+d.message,'error');}
+    }).catch(function(e){
+        var el=document.getElementById('sysStatus');
+        el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';
+        showAlert('InfluxDB ping failed: '+e.message,'error');
+    });
+}
+checkInfluxDB();
+
+function doLogout(){
+    fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+        window.location.href='/';
+    });
+}
+
+function switchOpType(t){
+    _currentOpType = t;
+    document.getElementById('dType').value = t;
+    document.getElementById('navOpening').classList.toggle('active', t==='opening');
+    document.getElementById('navPlugging').classList.toggle('active', t==='plugging');
+    document.getElementById('navAll').classList.toggle('active', t==='all');
+    document.getElementById('dimSectionOpening').style.display = (t==='plugging')?'none':'';
+    document.getElementById('dimSectionPlugging').style.display = (t==='opening'||t==='all')?'none':'';
+    document.getElementById('pageDesc').textContent = t==='opening'?'回转·倾动·转钎·冲击·推进·液压站':t==='plugging'?'转炮·打泥·保压·退炮·液压站':'周期识别 · 阶段标注 · 指标提取';
+}
+
+function filterDim(dim){
+    _currentDimFilter = dim;
+    var items = document.querySelectorAll('.nav-section .nav-item');
+    items.forEach(function(it){it.classList.remove('active');});
+    if(_currentOpType==='plugging')document.getElementById('navPlugging').classList.add('active');
+    else if(_currentOpType==='opening')document.getElementById('navOpening').classList.add('active');
+    else document.getElementById('navAll').classList.add('active');
+    if(globalCycles.length>0)renderCycles();
+}
+
+function showAlert(msg, cls){
+    var el = document.getElementById('alertBox');
+    el.textContent = msg;
+    el.className = 'alert alert-'+cls;
+    setTimeout(function(){el.className='alert';el.textContent='';}, 6000);
+}
+
+function showLoading(msg){
+    document.getElementById('loadingMsg').textContent = msg || '正在查询...';
+    document.getElementById('loading').classList.add('show');
+}
+function hideLoading(){ document.getElementById('loading').classList.remove('show'); }
+
+function renderTag(result){
+    if(result=='success') return '<span class="tag tag-ok">成功</span>';
+    if(result=='fail') return '<span class="tag tag-fail">失败</span>';
+    if(result=='incomplete') return '<span class="tag tag-warn">未完成</span>';
+    if(result=='partial') return '<span class="tag tag-info">未完整</span>';
+    return result||'--';
+}
+
+function formatBeijingTime(isoStr){
+    if(!isoStr)return'--';
+    var m=isoStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
+    if(m)return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4];
+    return isoStr.substring(0,19);
+}
+function formatTimeOnly(isoStr){
+    if(!isoStr)return'--';
+    var m=isoStr.match(/T(\d{2}:\d{2}:\d{2})/);
+    if(m)return m[1];
+    return isoStr.substring(11,19);
+}
+function renderOpType(t){
+    return t=='opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
+}
+
+var globalModelResults = [];
+
+function runModelAnalysis(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    var machine = document.getElementById('dMachine').value;
+    if(!start||!end){showAlert('请选择时间范围','error');return;}
+    document.getElementById('btnModel').disabled = true;
+    showAlert('正在运行智能模型分析...','info');
+    var url = '/api/model/analyze?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(data){
+        globalModelResults = data.results||[];
+        renderModelResults();
+        loadRecommendations(start, end, opType, machine);
+        document.getElementById('btnModel').disabled = false;
+        showAlert('模型分析完成: '+globalModelResults.length+' 个周期已评分','info');
+    }).catch(function(e){
+        showAlert('模型分析失败: '+e.message,'error');
+        document.getElementById('btnModel').disabled = false;
+    });
+}
+
+function loadRecommendations(start, end, opType, machine){
+    if(opType==='all') opType='opening';
+    var url = '/api/model/recommend?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end||start)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(data){
+        renderRecommendations(data.recommendations||[], data.history_count||0, data.success_count||0);
+    }).catch(function(e){console.log('Recommend load failed:',e)});
+}
+
+function renderModelResults(){
+    var card = document.getElementById('modelCard');
+    var body = document.getElementById('modelBody');
+    if(globalModelResults.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">';
+    globalModelResults.forEach(function(r){
+        var grade=r.quality.grade;
+        var gradeCls={'优':'A','良':'B','中':'C','差':'D'}[grade]||'D';
+        html+='<div style="border:1px solid #f1f5f9;border-radius:12px;padding:14px;background:#fafbfc">';
+        html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        html+='<span style="font-weight:600;font-size:12px">'+r.machine+'</span>';
+        html+='<span style="font-size:10px;color:#94a3b8">'+r.type+' | '+r.trigger_time.substring(11,19)+'</span>';
+        html+='</div>';
+        // Quality score
+        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
+        html+='<span style="font-size:28px;font-weight:700;color:'+(r.quality.score>=80?'#16a34a':r.quality.score>=60?'#d97706':'#dc2626')+'">'+r.quality.score+'</span>';
+        html+='<span class="model-badge '+gradeCls+'">'+grade+'</span>';
+        html+='</div>';
+        // Details
+        html+='<div style="font-size:10px;color:#64748b;margin-bottom:8px">'+r.quality.details.join(' | ')+'</div>';
+        // Phase bar
+        if(r.phases.length>0){
+            var totalDur=r.phases.reduce(function(s,p){return s+(p.duration_s||0)},0)||1;
+            html+='<div class="phase-bar">';
+            r.phases.forEach(function(p){
+                var pct=Math.max((p.duration_s/totalDur)*100,2);
+                html+='<div class="phase-seg '+p.phase+'" style="width:'+pct+'%" title="'+p.label+': '+p.duration_s+'s"></div>';
+            });
+            html+='</div>';
+            html+='<div style="font-size:9px;color:#94a3b8;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">';
+            r.phases.forEach(function(p){
+                html+='<span>'+p.label+' '+p.duration_s+'s</span>';
+            });
+            html+='</div>';
+        }
+        // Anomalies
+        if(r.anomalies.length>0){
+            html+='<div style="margin-top:6px;font-size:10px;color:#dc2626">';
+            r.anomalies.forEach(function(a){html+='<span style="margin-right:6px">..'+a+'</span>'});
+            html+='</div>';
+        }
+        html+='</div>';
+    });
+    html+='</div>';
+    body.innerHTML=html;
+}
+
+function renderRecommendations(recs, histCount, succCount){
+    var card = document.getElementById('recommendCard');
+    var body = document.getElementById('recommendBody');
+    if(recs.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var html='';
+    recs.forEach(function(r){
+        html+='<div class="rec-card">';
+        html+='<div class="rec-title">'+r.param+'</div>';
+        html+='<div class="rec-value">'+r.value+'<span class="rec-unit"> '+r.unit+'</span></div>';
+        html+='<div class="rec-reason">'+r.reason+'</div>';
+        html+='</div>';
+    });
+    html+='<div style="font-size:10px;color:#94a3b8;grid-column:1/-1">基于 '+succCount+'/'+histCount+' 次历史成功作业</div>';
+    body.innerHTML=html;
+}
+
+function runAnalysis(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    var machine = document.getElementById('dMachine').value;
+
+    if(!start||!end){
+        showAlert('请选择开始和结束时间', 'error');
+        return;
+    }
+    var diff =(new Date(end).getTime()-new Date(start).getTime())/3600000;
+    if(diff > 24){
+        showAlert('时间跨度不能超过24小时，当前跨度 '+Math.round(diff)+' 小时', 'error');
+        return;
+    }
+    if(diff < 0){
+        showAlert('结束时间不能早于开始时间', 'error');
+        return;
+    }
+    if(!APP_TOKEN){
+        showAlert('系统配置错误：缺少 API Token，请联系管理员', 'error');
+        return;
+    }
+
+    document.getElementById('btnAnalyze').disabled = true;
+    showLoading('正在检测作业周期...');
+    showAlert('正在查询 InfluxDB，请稍候...', 'info');
+
+    var url = '/api/analysis/cycles?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){
+        if(!r.ok) throw new Error('服务器返回 HTTP '+r.status);
+        return r.json();
+    }).then(function(data){
+        if(data.error){
+            showAlert(data.error, 'error');
+            hideLoading();
+            document.getElementById('btnAnalyze').disabled = false;
+            return;
+        }
+        globalCycles = data.cycles || [];
+        if(machine!=='all'){
+            globalCycles = globalCycles.filter(function(c){return c.machine===machine;});
+        }
+        renderCycles();
+        loadStates();
+        renderStats();
+        document.getElementById('btnExport').disabled = globalCycles.length === 0;
+        document.getElementById('btnAnalyze').disabled = false;
+        hideLoading();
+        document.getElementById('queryTimeRange').textContent = '查询: '+start.replace('T',' ')+' ~ '+end.replace('T',' ');
+        showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+    }).catch(function(e){
+        showAlert('分析失败: '+e.message, 'error');
+        hideLoading();
+        document.getElementById('btnAnalyze').disabled = false;
+    });
+}
+
+function renderStats(){
+    var openCycles = globalCycles.filter(function(c){return c.type=='opening';});
+    var plugCycles = globalCycles.filter(function(c){return c.type=='plugging';});
+    var openOk = openCycles.filter(function(c){return c.result=='success'||c.breakthrough;}).length;
+    var plugOk = plugCycles.filter(function(c){return c.result=='success';}).length;
+
+    var openDur = 0, plugDur = 0;
+    if(openCycles.length>0){var t=openCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);openDur=Math.round(t/openCycles.length);}
+    if(plugCycles.length>0){var t=plugCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);plugDur=Math.round(t/plugCycles.length);}
+
+    var html = '';
+    html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+' 次</div><div class="stat-detail">'+openOk+' 次钻透 | 均 '+Math.floor(openDur/60)+'m'+(openDur%60)+'s</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+' 次</div><div class="stat-detail">'+plugOk+' 次完成 | 均 '+Math.floor(plugDur/60)+'m'+(plugDur%60)+'s</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">开口成功率</div><div class="stat-value">'+(openCycles.length>0?Math.round(openOk/openCycles.length*100):0)+'%</div><div class="stat-detail">钻透/总数</div></div>';
+    html += '<div class="stat-card"><div class="stat-label">堵口成功率</div><div class="stat-value">'+(plugCycles.length>0?Math.round(plugOk/plugCycles.length*100):0)+'%</div><div class="stat-detail">完成/总数</div></div>';
+    document.getElementById('statsRow').innerHTML = html;
+    document.getElementById('cycleCount').textContent = '共 '+globalCycles.length+' 个周期';
+}
+
+function renderCycles(){
+    var tbody = document.getElementById('cycleBody');
+    var filtered = globalCycles;
+    if(_currentDimFilter){
+        filtered = globalCycles;
+    }
+    if(filtered.length===0){
+        tbody.innerHTML = '';
+        document.getElementById('cycleTable').style.display = 'none';
+        document.getElementById('cycleEmpty').style.display = '';
+        document.getElementById('cycleEmpty').innerHTML = '<h3>'+(globalCycles.length===0?'未检测到作业周期':'当前筛选无匹配周期')+'</h3><p>'+(globalCycles.length===0?'选择时间范围后点击「开始分析」':'尝试调整筛选条件')+'</p>';
+        return;
+    }
+    document.getElementById('cycleEmpty').style.display = 'none';
+    document.getElementById('cycleTable').style.display = '';
+
+    var html = '';
+    filtered.forEach(function(c,i){
+        var keyMetric = '';
+        if(c.type=='opening'){
+            keyMetric = '钻进'+(c.push_pos_change||0).toFixed(3)+'m | 推进峰'+(c.push_press_peak||0).toFixed(0)+'MPa';
+            if(c.breakthrough)keyMetric += ' | 已钻透';
+        }else{
+            keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
+            if(c.hold_ok)keyMetric += ' | 保压OK';
+        }
+        var winStart = formatTimeOnly(c.window_start);
+        var winEnd = formatTimeOnly(c.window_end);
+        var durMin = Math.floor((c.duration_s||0)/60);
+        var durSec = Math.round((c.duration_s||0)%60);
+        html += '<tr>';
+        html += '<td style="font-weight:600">'+c.machine+'</td>';
+        html += '<td>'+renderOpType(c.type)+'</td>';
+        html += '<td>'+formatBeijingTime(c.trigger_time)+'</td>';
+        html += '<td>'+winStart+' ~ '+winEnd+'</td>';
+        html += '<td>'+durMin+'分'+durSec+'秒</td>';
+        html += '<td style="font-size:11px">'+keyMetric+'</td>';
+        html += '<td>'+renderTag(c.result)+'</td>';
+        html += '<td><button class="btn-ghost" onclick="showDetail('+globalCycles.indexOf(c)+')">详情</button></td>';
+        html += '</tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function showDetail(idx){
+    var c = globalCycles[idx];
+    if(!c)return;
+    document.getElementById('detailCard').style.display = '';
+    document.getElementById('detailTitle').textContent = c.machine + ' / ' + ((c.type=='opening')?'开口':c.type=='plugging'?'堵口':c.type);
+    document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
+
+    showLoading('正在提取指标...');
+    var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(metrics){
+        if(metrics.error){showAlert(metrics.error,'error');hideLoading();return;}
+        renderMetrics(metrics);
+        loadDetailChart(c, metrics);
+        hideLoading();
+    }).catch(function(e){showAlert('指标提取失败: '+e.message,'error');hideLoading();});
+}
+
+function renderMetrics(m){
+    var html = '';
+    if(m.type=='opening'){
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">冲击状态</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
+    }else{
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格 (≥60s)':'保压不足 (<60s)')+'</div></div>';
+    }
+    document.getElementById('detailMetrics').innerHTML = html;
+}
+
+function loadDetailChart(c, metrics){
+    var labels = getLabelMap();
+    var wStart = c.window_start;
+    var wEnd = c.window_end;
+    var sigs;
+    if(c.type=='opening'){
+        sigs = c.machine.indexOf('东')>=0 ?
+            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88','LT_LQFC_63'] :
+            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125','LT_LQFC_100'];
+    }else{
+        sigs = c.machine.indexOf('东')>=0 ?
+            ['LT_LQFC_138','LT_LQFC_179','LT_LQFC_135'] :
+            ['LT_LQFC_161','LT_LQFC_180','LT_LQFC_158'];
+    }
+    var url = '/api/trend?params='+sigs.join(',')+'&start='+encodeURIComponent(wStart.substring(0,16))+'&end='+encodeURIComponent(wEnd.substring(0,16));
+    fetch(url+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
+        if(data.error){return;}
+        var ctx = document.getElementById('detailChart').getContext('2d');
+        if(chartInst)chartInst.destroy();
+        var datasets = [];
+        var colors = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1'];
+        data.series.forEach(function(s,i){
+            var pts = s.data || [];
+            var values = pts.map(function(p){return p.value});
+            var isPos = (s.param||'').indexOf('67')>0||(s.param||'').indexOf('104')>0||(s.param||'').indexOf('160')>0||(s.param||'').indexOf('63')>0||(s.param||'').indexOf('100')>0||(s.param||'').indexOf('135')>0||(s.param||'').indexOf('158')>0;
+            var yAxisID = isPos ? 'y-pos' : 'y-press';
+            datasets.push({label:labels[s.param]||s.param,data:values,borderColor:colors[i%colors.length],backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0.1,yAxisID:yAxisID,fill:false});
+        });
+        chartInst = new Chart(ctx,{type:'line',data:{labels:data.series.length>0?(data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}):[],datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{position:'top',labels:{font:{size:11},usePointStyle:true,padding:16}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{font:{size:10},maxTicksLimit:15},grid:{color:'#f1f5f9'}},'y-press':{type:'linear',display:true,position:'left',title:{display:true,text:'压力 (MPa)',font:{size:10}},ticks:{font:{size:10}},grid:{color:'#f1f5f9'}},'y-pos':{type:'linear',display:true,position:'right',title:{display:true,text:'位置/角度',font:{size:10}},ticks:{font:{size:10}},grid:{display:false}}}}});
+        document.getElementById('detailChart').parentElement.style.height = '400px';
+    }).catch(function(){});
+}
+
+
+function loadStates(){
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    if(!start||!end) return;
+    var url = '/api/analysis/states?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&machine=all&token='+APP_TOKEN;
+    fetch(url).then(function(r){return r.json()}).then(function(data){
+        renderStateTimeline(data.states||[]);
+    }).catch(function(e){console.log('State load failed:',e)});
+}
+
+function renderStateTimeline(states){
+    var card = document.getElementById('stateTimelineCard');
+    var content = document.getElementById('stateTimelineContent');
+    if(states.length===0){card.style.display='none';return;}
+    card.style.display='';
+    var colors={'standby':'standby','working':'working','fault':'fault','maintenance':'maintenance','offline':'offline'};
+    var html='';
+    var lastMachine='';
+    states.forEach(function(s,i){
+        if(s.machine!==lastMachine){
+            if(lastMachine!=='') html+='<div style="width:100%;height:1px;margin:6px 0;background:#f1f5f9"></div>';
+            html+='<div style="font-size:10px;color:#94a3b8;font-weight:600;width:100%;margin-bottom:4px">'+s.machine+'</div>';
+            lastMachine=s.machine;
+        }
+        var t=s.time.substring(11,16);
+        html+='<span class="state-block '+s.state+'" title="'+s.time+'">'+t+' '+s.label+'</span>';
+        if(i<states.length-1 && states[i+1].machine===s.machine) html+='<span class="state-separator">→</span>';
+    });
+    content.innerHTML=html;
+}
+
+function exportResult(){
+    if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
+    var start = document.getElementById('dStart').value;
+    var end = document.getElementById('dEnd').value;
+    var opType = document.getElementById('dType').value;
+    var url = '/api/analysis/export?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
+    window.location.href = url;
+}
+</script>
+</body>
+</html>
+

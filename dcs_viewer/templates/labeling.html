@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>循环标注 — DCS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+
+.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
+.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
+.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
+.nav-section { padding: 12px 0; }
+.nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
+.nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
+.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
+.sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
+
+.main { margin-left: 220px; flex: 1; min-height: 100vh; }
+.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
+.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.header .badge { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
+.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
+.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
+.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
+.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
+.container { padding: 24px 32px; }
+
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 20px; margin-bottom: 20px; }
+.stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; cursor: default; }
+.stat-card.clickable { cursor: pointer; transition: all 0.2s; }
+.stat-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04); }
+.stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
+.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
+.stat-card .stat-detail { font-size: 11px; color: #94a3b8; margin-top: 6px; }
+
+.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
+.card-body { padding: 24px; }
+.card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
+.card-header .close-btn { margin-left: auto; cursor: pointer; font-size: 18px; color: #94a3b8; background: none; border: none; line-height: 1; padding: 0 4px; }
+.card-header .close-btn:hover { color: #ff4d4f; }
+
+.filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.filter-group { display: flex; flex-direction: column; gap: 5px; }
+.filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
+.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; min-width: 130px; }
+.filter-group input:focus, .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+
+.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
+.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
+.btn-primary:disabled { background: #b0c4de; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
+.btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
+.btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
+.btn-danger { padding: 5px 14px; border: 1px solid #fecaca; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #dc2626; font-weight: 500; transition: all 0.2s; }
+.btn-danger:hover { background: #fef2f2; border-color: #fca5a5; }
+.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; text-decoration: none; }
+.btn-ghost:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: #f8fafc; font-weight: 600; text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; border-bottom: 1px solid #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; }
+td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+tr:hover { background: #f8fafc; }
+tr.row-selected { background: #eff6ff; }
+tr.row-labeled { background: #f0fdf4; }
+
+.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; display: inline-block; }
+.tag-ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.tag-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.tag-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.tag-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.tag-labeled { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.tag-unlabeled { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+
+.form-section { margin-bottom: 20px; }
+.form-section-title { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.form-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 150px; }
+.form-group label { font-size: 11px; color: #64748b; font-weight: 600; }
+.form-group input, .form-group select, .form-group textarea { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; font-family: inherit; }
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+.form-group textarea { resize: vertical; min-height: 70px; font-family: "SF Mono", "Consolas", monospace; font-size: 12px; }
+
+.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.checkbox-group label { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.checkbox-group input[type="checkbox"] { accent-color: #1677ff; }
+
+.pagination { display: flex; gap: 4px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.pagination button { padding: 5px 10px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; transition: all 0.2s; }
+.pagination button:hover:not(:disabled) { border-color: #1677ff; color: #1677ff; }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pagination button.active { background: #1677ff; color: #fff; border-color: #1677ff; }
+.pagination .page-info { font-size: 12px; color: #94a3b8; margin: 0 8px; }
+
+.two-panel { display: flex; gap: 16px; }
+.two-panel .panel-left { flex: 1; min-width: 0; }
+.two-panel .panel-right { width: 380px; min-width: 380px; }
+
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; }
+.detail-grid dt { color: #94a3b8; font-weight: 500; }
+.detail-grid dd { color: #1f2937; font-weight: 600; margin: 0; }
+
+.alert { padding: 12px 20px; border-radius: 12px; margin-bottom: 16px; font-size: 13px; display: none; }
+.alert-error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
+.alert-info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
+.alert-success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+
+.empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
+.empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
+.empty-state p { font-size: 12px; }
+
+@media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar .nav-item span, .sidebar .nav-section-title { display: none; }
+    .main { margin-left: 60px; }
+    .filter-bar { flex-direction: column; }
+    .two-panel { flex-direction: column; }
+    .two-panel .panel-right { width: 100%; min-width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>DCS 分析平台</h2>
+        <div class="version">GBDT-MPC-PID 三级架构</div>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">分析功能</div>
+        <a class="nav-item" href="/analysis">开口/堵口分析</a>
+        <a class="nav-item active" href="/labeling">循环标注</a>
+    </div>
+
+    <div class="nav-section">
+        <div class="nav-section-title">数据操作</div>
+        <a class="nav-item" href="javascript:exportLabeling()">导出数据</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span>
+    </div>
+</div>
+
+<div class="main">
+
+    <div class="header">
+        <h1>循环标注</h1>
+        <span class="badge">Labeling</span>
+        <span class="breadcrumb" id="pageDesc">工艺循环人工标注与审核</span>
+
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling" class="active">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base">知识库</a>
+        </div>
+    </div>
+
+    <div class="container">
+
+        <div id="alertBox" class="alert"></div>
+
+        <div class="stats-row" id="statsRow">
+            <div class="stat-card"><div class="stat-label">已标注</div><div class="stat-value" style="color:#16a34a" id="statLabeled">--</div></div>
+            <div class="stat-card"><div class="stat-label">未标注</div><div class="stat-value" style="color:#64748b" id="statUnlabeled">--</div></div>
+            <div class="stat-card"><div class="stat-label">总循环数</div><div class="stat-value" id="statTotal">--</div></div>
+        </div>
+
+        <div class="filter-bar">
+            <div class="filter-group"><label>设备</label>
+                <select id="fEquipment"><option value="">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
+            </div>
+            <div class="filter-group"><label>循环类型</label>
+                <select id="fCycleType"><option value="">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+            </div>
+            <div class="filter-group"><label>标注状态</label>
+                <select id="fLabelStatus"><option value="">全部</option><option value="labeled">已标注</option><option value="unlabeled">未标注</option></select>
+            </div>
+            <div class="filter-group"><label>每页数量</label>
+                <select id="fPerPage"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="loadCycles(1)" id="btnLoad">查询循环</button>
+        </div>
+
+        <div class="two-panel">
+            <div class="panel-left">
+                <div class="card">
+                    <div class="card-header">循环列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span></div>
+                    <div class="card-body" style="overflow-x:auto">
+                        <div id="cycleEmpty" class="empty-state"><h3>选择筛选条件</h3><p>点击「查询循环」加载开口和堵口作业周期，进行人工标注</p></div>
+                        <table id="cycleTable" style="display:none">
+                            <thead><tr>
+                                <th>设备</th><th>类型</th><th>开始时间</th><th>结束时间</th><th>耗时</th><th>标注状态</th><th>操作</th>
+                            </tr></thead>
+                            <tbody id="cycleBody"></tbody>
+                        </table>
+                        <div class="pagination" id="pagination"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-right">
+                <div class="card" id="detailCard" style="display:none">
+                    <div class="card-header">
+                        循环详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span>
+                        <button class="close-btn" onclick="closeDetail()">&times;</button>
+                        <span id="labelStatus" class="tag" style="margin-left:8px"></span>
+                    </div>
+                    <div class="card-body">
+                        <dl class="detail-grid" id="detailInfo"></dl>
+
+                        <div style="margin-top:16px">
+                            <div class="form-section-title">标注信息</div>
+                            <div class="form-row">
+                                <div class="form-group"><label>状态</label>
+                                    <select id="lblStatus">
+                                        <option value="success">成功</option>
+                                        <option value="fail">失败</option>
+                                        <option value="anomaly">异常</option>
+                                        <option value="incomplete">未完成</option>
+                                    </select>
+                                </div>
+                                <div class="form-group"><label>成功判定</label>
+                                    <select id="lblSuccess">
+                                        <option value="">未判定</option>
+                                        <option value="yes">是（成功）</option>
+                                        <option value="no">否（失败）</option>
+                                    </select>
+                                </div>
+                                <div class="form-group"><label>标注人</label>
+                                    <input type="text" id="lblLabeler" placeholder="输入标注人姓名">
+                                </div>
+                            </div>
+                            <div class="form-group"><label>阶段数据 (JSON)</label>
+                                <textarea id="lblPhases" placeholder='[{"phase":"approach","start":"...","end":"...","duration_s":10}, ...]'></textarea>
+                            </div>
+                            <div class="form-group"><label>异常标签（多选）</label>
+                                <div class="checkbox-group" id="anomalyTags">
+                                    <label><input type="checkbox" value="钻透信号缺失"> 钻透信号缺失</label>
+                                    <label><input type="checkbox" value="推进压力异常"> 推进压力异常</label>
+                                    <label><input type="checkbox" value="转钎压力异常"> 转钎压力异常</label>
+                                    <label><input type="checkbox" value="打泥量不足"> 打泥量不足</label>
+                                    <label><input type="checkbox" value="保压不足"> 保压不足</label>
+                                    <label><input type="checkbox" value="冲击未开启"> 冲击未开启</label>
+                                    <label><input type="checkbox" value="周期截断"> 周期截断</label>
+                                    <label><input type="checkbox" value="传感器抖动"> 传感器抖动</label>
+                                </div>
+                            </div>
+                            <div class="form-row" style="align-items:center">
+                                <div class="form-group" style="flex:0 0 auto">
+                                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                                        <input type="checkbox" id="lblHadIntervention"> 存在人工干预
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-group"><label>备注</label>
+                                <textarea id="lblNotes" placeholder="标注备注..."></textarea>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:16px">
+                                <button class="btn btn-primary" onclick="saveLabel()" id="btnSave">保存标注</button>
+                                <button class="btn-danger" onclick="deleteLabel()" id="btnDelete" style="display:none">删除标注</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var currentPage = 1;
+var totalPages = 1;
+var totalItems = 0;
+var selectedCycle = null;
+var selectedLabel = null;
+
+// ========== 工具函数 ==========
+function formatBeijingTime(isoStr) {
+    if (!isoStr) return '--';
+    var m = isoStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
+    if (m) return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4];
+    return isoStr.substring(0, 19);
+}
+function formatTimeOnly(isoStr) {
+    if (!isoStr) return '--';
+    var m = isoStr.match(/T(\d{2}:\d{2}:\d{2})/);
+    if (m) return m[1];
+    return isoStr.substring(11, 19);
+}
+function renderOpType(t) {
+    return t === 'opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
+}
+function showAlert(msg, cls) {
+    var el = document.getElementById('alertBox');
+    el.textContent = msg;
+    el.className = 'alert alert-' + cls;
+    setTimeout(function () { el.className = 'alert'; el.textContent = ''; }, 6000);
+}
+function showLoading(msg) {
+    document.getElementById('loadingMsg').textContent = msg || '正在查询...';
+    document.getElementById('loading').classList.add('show');
+}
+function hideLoading() { document.getElementById('loading').classList.remove('show'); }
+
+// ========== 登录与状态检查 ==========
+function checkLogin() {
+    fetch('/api/user?token=' + APP_TOKEN).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.logged_in) { window.location.href = '/'; }
+        if (d.username) { var el = document.getElementById('sidebarUser'); if (el) el.textContent = d.username; }
+    }).catch(function (e) { window.location.href = '/'; });
+}
+checkLogin();
+
+function doLogout() {
+    fetch('/api/logout', { method: 'POST' }).then(function () { window.location.href = '/'; });
+}
+
+// ========== 加载统计 ==========
+function loadStats() {
+    fetch('/api/labeling/stats?token=' + APP_TOKEN)
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            document.getElementById('statLabeled').textContent = data.labeled || 0;
+            document.getElementById('statUnlabeled').textContent = data.unlabeled || 0;
+            document.getElementById('statTotal').textContent = data.total || 0;
+        })
+        .catch(function (e) { console.log('Stats load failed:', e); });
+}
+
+// ========== 查询循环列表 ==========
+function queryCycles() {
+    currentPage = 1;
+    loadCycles();
+}
+
+function loadCycles() {
+    var equipmentId = document.getElementById('fEquipment').value;
+    var cycleType = document.getElementById('fCycleType').value;
+    var labelStatus = document.getElementById('fLabelStatus').value;
+    var perPage = parseInt(document.getElementById('fPerPage').value) || 50;
+
+    selectedCycle = null;
+    selectedLabel = null;
+    document.getElementById('detailCard').style.display = 'none';
+
+    var url = '/api/labeling/cycles?equipment_id=' + encodeURIComponent(equipmentId)
+        + '&cycle_type=' + encodeURIComponent(cycleType)
+        + '&page=' + currentPage + '&per_page=' + perPage + '&token=' + APP_TOKEN;
+
+    showLoading('正在加载循环列表...');
+    fetch(url).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (data) {
+            hideLoading();
+            renderCycleTable(data.cycles || [], data.page, data.total);
+            currentPage = data.page || 1;
+            totalPages = Math.ceil((data.total || 0) / perPage);
+            totalItems = data.total || 0;
+            updatePager();
+            loadStats();
+        })
+        .catch(function (e) {
+            hideLoading();
+            showAlert('加载失败: ' + e.message, 'error');
+        });
+}
+
+function updatePager() {
+    var pager = document.getElementById('pagination');
+    if (!pager) return;
+    var html = '';
+    html += '<button onclick="prevPage()" ' + (currentPage <= 1 ? 'disabled' : '') + '>上一页</button>';
+    html += '<span class="page-info">第 ' + currentPage + ' 页 / 共 ' + totalPages + ' 页（' + totalItems + ' 条）</span>';
+    html += '<button onclick="nextPage()" ' + (currentPage >= totalPages ? 'disabled' : '') + '>下一页</button>';
+    pager.innerHTML = html;
+}
+
+function prevPage() {
+    if (currentPage <= 1) return;
+    currentPage--;
+    loadCycles();
+}
+
+function nextPage() {
+    if (currentPage >= totalPages) return;
+    currentPage++;
+    loadCycles();
+}
+
+// ========== 渲染列表 ==========
+function renderCycleTable(cycles, page, total) {
+    var tbody = document.getElementById('cycleBody');
+    if (cycles.length === 0) {
+        tbody.innerHTML = '';
+        document.getElementById('cycleTable').style.display = 'none';
+        document.getElementById('cycleEmpty').style.display = '';
+        return;
+    }
+    document.getElementById('cycleEmpty').style.display = 'none';
+    document.getElementById('cycleTable').style.display = '';
+
+    var html = '';
+    cycles.forEach(function (c) {
+        var durMin = Math.floor((c.duration_s || 0) / 60);
+        var durSec = Math.round((c.duration_s || 0) % 60);
+        var labelBadge = c.has_label
+            ? '<span class="tag tag-ok">已标注</span>'
+            : '<span class="tag" style="background:#f1f5f9;color:#94a3b8">未标注</span>';
+        html += '<tr class="' + (c.has_label ? '' : '') + '"';
+        html += ' onclick="selectCycle(\'' + c.id + '\')" style="cursor:pointer">';
+        html += '<td style="font-weight:600">' + (c.equipment_id || '--') + '</td>';
+        html += '<td>' + renderOpType(c.cycle_type) + '</td>';
+        html += '<td>' + formatBeijingTime(c.start_ts) + '</td>';
+        html += '<td>' + formatBeijingTime(c.end_ts) + '</td>';
+        html += '<td>' + durMin + '分' + durSec + '秒</td>';
+        html += '<td>' + (c.status || '--') + '</td>';
+        html += '<td>' + labelBadge + '</td>';
+        html += '<td><button class="btn-ghost" onclick="event.stopPropagation();selectCycle(\'' + c.id + '\')">标注</button></td>';
+        html += '</tr>';
+    });
+    tbody.innerHTML = html;
+    document.getElementById('cycleCount').textContent = '共 ' + total + ' 个循环';
+}
+
+// ========== 选中循环 + 加载详情 ==========
+function selectCycle(cycleId) {
+    showLoading('正在加载循环详情...');
+    fetch('/api/labeling/cycles/' + cycleId + '?token=' + APP_TOKEN)
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (data) {
+            hideLoading();
+            selectedCycle = data.cycle;
+            selectedLabel = data.label;
+            renderDetail();
+            // 高亮当前行
+            var rows = document.querySelectorAll('#cycleBody tr');
+            rows.forEach(function (r) { r.classList.remove('tr-active'); });
+            var idx = -1;
+            rows.forEach(function (r, i) {
+                if (r.querySelector('td') && r.querySelector('td').textContent === (data.cycle && data.cycle.equipment_id)) {
+                    // 粗略匹配，用 onclick 中的 id
+                }
+            });
+        })
+        .catch(function (e) {
+            hideLoading();
+            showAlert('加载详情失败: ' + e.message, 'error');
+        });
+}
+
+function closeDetail() {
+    selectedCycle = null;
+    selectedLabel = null;
+    document.getElementById('detailCard').style.display = 'none';
+}
+
+// ========== 渲染详情面板 ==========
+function renderDetail() {
+    if (!selectedCycle) return;
+    document.getElementById('detailCard').style.display = '';
+    document.getElementById('detailTitle').textContent = (selectedCycle.equipment_id || '') + ' / ' + (selectedCycle.cycle_type === 'opening' ? '开口' : '堵口');
+    var c = selectedCycle;
+    var durMin = Math.floor((c.duration_s || 0) / 60);
+    var durSec = Math.round((c.duration_s || 0) % 60);
+    var infoHtml = '<table class="detail-info">'
+        + '<tr><td class="dlabel">设备</td><td>' + (c.equipment_id || '--') + '</td></tr>'
+        + '<tr><td class="dlabel">类型</td><td>' + (c.cycle_type === 'opening' ? '开口' : '堵口') + '</td></tr>'
+        + '<tr><td class="dlabel">开始时间</td><td>' + formatBeijingTime(c.start_ts) + '</td></tr>'
+        + '<tr><td class="dlabel">结束时间</td><td>' + formatBeijingTime(c.end_ts) + '</td></tr>'
+        + '<tr><td class="dlabel">耗时</td><td>' + durMin + '分' + durSec + '秒</td></tr>'
+        + '<tr><td class="dlabel">状态</td><td>' + (c.status || '--') + '</td></tr>'
+        + '</table>';
+    document.getElementById('detailInfo').innerHTML = infoHtml;
+
+    // 填充表单
+    if (selectedLabel) {
+        document.getElementById('lblStatus').value = selectedLabel.status || 'success';
+        document.getElementById('lblSuccess').value = selectedLabel.success === true ? 'yes' : (selectedLabel.success === false ? 'no' : '');
+        document.getElementById('lblLabeler').value = selectedLabel.labeler || '';
+        document.getElementById('lblPhases').value = selectedLabel.phases ? JSON.stringify(selectedLabel.phases, null, 2) : '';
+        document.getElementById('lblNotes').value = selectedLabel.notes || '';
+        document.getElementById('lblHadIntervention').checked = !!selectedLabel.had_intervention;
+
+        // 异常标签多选
+        var tags = selectedLabel.anomaly_tags || [];
+        var cbs = document.querySelectorAll('#anomalyTags input[type=checkbox]');
+        cbs.forEach(function (cb) { cb.checked = tags.indexOf(cb.value) >= 0; });
+
+        document.getElementById('labelStatus').textContent = '已标注';
+        document.getElementById('labelStatus').className = 'tag tag-ok';
+        document.getElementById('btnDelete').style.display = '';
+    } else {
+        document.getElementById('lblStatus').value = 'success';
+        document.getElementById('lblSuccess').value = '';
+        document.getElementById('lblLabeler').value = '';
+        document.getElementById('lblPhases').value = '';
+        document.getElementById('lblNotes').value = '';
+        document.getElementById('lblHadIntervention').checked = false;
+        var cbs = document.querySelectorAll('#anomalyTags input[type=checkbox]');
+        cbs.forEach(function (cb) { cb.checked = false; });
+        document.getElementById('labelStatus').textContent = '未标注';
+        document.getElementById('labelStatus').className = 'tag';
+        document.getElementById('labelStatus').style.background = '#f1f5f9';
+        document.getElementById('labelStatus').style.color = '#94a3b8';
+        document.getElementById('btnDelete').style.display = 'none';
+    }
+}
+
+// ========== 提交标注 ==========
+function saveLabel() {
+    if (!selectedCycle) { showAlert('请先选择一个循环', 'error'); return; }
+
+    var successVal = document.getElementById('lblSuccess').value;
+    var phasesRaw = document.getElementById('lblPhases').value.trim();
+    var phases = null;
+    if (phasesRaw) {
+        try { phases = JSON.parse(phasesRaw); }
+        catch (e) { showAlert('阶段 JSON 格式错误: ' + e.message, 'error'); return; }
+    }
+
+    var anomalyTags = [];
+    var cbs = document.querySelectorAll('#anomalyTags input[type=checkbox]:checked');
+    cbs.forEach(function (cb) { anomalyTags.push(cb.value); });
+
+    var body = {
+        status: document.getElementById('lblStatus').value || 'success',
+        success: successVal === 'yes' ? true : (successVal === 'no' ? false : null),
+        labeler: document.getElementById('lblLabeler').value || '标注员',
+        phases: phases,
+        anomaly_tags: anomalyTags,
+        had_intervention: document.getElementById('lblHadIntervention').checked,
+        notes: document.getElementById('lblNotes').value
+    };
+
+    showLoading('正在保存标注...');
+    fetch('/api/labeling/cycles/' + selectedCycle.id + '/label?token=' + APP_TOKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (data) {
+            hideLoading();
+            if (data.ok) {
+                showAlert('标注保存成功', 'info');
+                selectedLabel = body;
+                selectedLabel.anomaly_tags = anomalyTags;
+                renderDetail();
+                loadStats();
+                loadCycles();
+            } else {
+                showAlert('保存失败: ' + (data.error || '未知错误'), 'error');
+            }
+        })
+        .catch(function (e) {
+            hideLoading();
+            showAlert('保存失败: ' + e.message, 'error');
+        });
+}
+
+// ========== 删除标注 ==========
+function deleteLabel() {
+    if (!selectedCycle) { showAlert('请先选择一个循环', 'error'); return; }
+    if (!selectedLabel) { showAlert('该循环没有标注可删除', 'error'); return; }
+    if (!confirm('确认删除该循环的标注记录吗？此操作不可恢复。')) return;
+
+    showLoading('正在删除标注...');
+    fetch('/api/labeling/cycles/' + selectedCycle.id + '/label?token=' + APP_TOKEN, {
+        method: 'DELETE'
+    })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (data) {
+            hideLoading();
+            if (data.ok) {
+                showAlert('标注已删除', 'info');
+                selectedLabel = null;
+                renderDetail();
+                loadStats();
+                loadCycles();
+            } else {
+                showAlert('删除失败: ' + (data.error || '未知错误'), 'error');
+            }
+        })
+        .catch(function (e) {
+            hideLoading();
+            showAlert('删除失败: ' + e.message, 'error');
+        });
+}
+
+// ========== 导出 ==========
+function exportLabeling() {
+    var cycleType = document.getElementById('fCycleType').value;
+    var url = '/api/labeling/export?type=' + encodeURIComponent(cycleType) + '&format=csv&token=' + APP_TOKEN;
+    window.location.href = url;
+}
+
+// ========== 初始化 ==========
+loadStats();
+queryCycles();
+</script>
+
+</body>
+</html>

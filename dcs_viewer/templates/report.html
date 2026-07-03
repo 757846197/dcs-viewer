@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分析报告 — DCS</title>
+<script src="/static/lib/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744,#2d3f66);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.nav-section{padding:12px 0}
+.nav-section-title{padding:6px 20px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,.3);font-weight:600}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;border-left:3px solid transparent;color:rgba(255,255,255,.65);text-decoration:none}
+.nav-item:hover{background:rgba(255,255,255,.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,.15);border-left-color:#1677ff;color:#fff}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700;background:linear-gradient(135deg,#1a1a2e,#1677ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;transition:all .2s;font-weight:500}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.container{padding:24px 32px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:20px}
+.stat-card{background:#fff;border-radius:16px;padding:20px 24px;box-shadow:0 2px 12px rgba(0,0,0,.04)}
+.stat-card .stat-label{font-size:12px;color:#94a3b8;margin-bottom:6px;font-weight:500}
+.stat-card .stat-value{font-size:28px;font-weight:700;color:#0f172a}
+.stat-card .stat-detail{font-size:11px;color:#94a3b8;margin-top:6px}
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.04);margin-bottom:16px;overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;color:#0f172a}
+.card-body{padding:24px}
+.btn{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600;transition:all .25s}
+.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(22,119,255,.3)}
+.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.tag-ok{background:#f0fdf4;color:#166534}
+.tag-warn{background:#fffbeb;color:#92400e}
+.tag-fail{background:#fef2f2;color:#991b1b}
+.grade-A{color:#16a34a}
+.grade-B{color:#2563eb}
+.grade-C{color:#d97706}
+.grade-D{color:#dc2626}
+.health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.health-card{background:#f8fafc;border-radius:12px;padding:16px;border:1px solid #f1f5f9}
+.health-card h3{font-size:14px;margin-bottom:8px}
+.health-bar{height:8px;border-radius:4px;background:#e2e8f0;margin:8px 0;overflow:hidden}
+.health-bar-fill{height:100%;border-radius:4px;transition:width .5s}
+.loading{text-align:center;padding:48px;color:#94a3b8}
+.alert{padding:12px 20px;border-radius:12px;margin-bottom:16px;font-size:13px;display:none}
+.alert-error{display:block;background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert-info{display:block;background:#eff6ff;border:1px solid #bfdbfe;color:#2563eb}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<div class="sidebar-header"><h2>DCS 分析平台</h2></div>
+<div class="nav-section">
+<div class="nav-section-title">导航</div>
+<a class="nav-item" href="/">历史查询</a>
+<a class="nav-item" href="/realtime">实时监控</a>
+<a class="nav-item" href="/trend">趋势分析</a>
+<a class="nav-item" href="/analysis">作业分析</a>
+<a class="nav-item" href="/labeling">数据标注</a>
+<a class="nav-item active" href="/report">分析报告</a>
+</div>
+</div>
+
+<div class="main">
+<div class="header">
+<h1>分析报告</h1>
+<div class="nav-links">
+<a href="/">历史查询</a><a href="/realtime">实时监控</a><a href="/trend">趋势分析</a><a href="/analysis">作业分析</a><a href="/labeling">循环标注</a><a href="/report" class="active">分析报告</a><a href="/rules/opening">开口规则</a><a href="/rules/plugging">堵口规则</a><a href="/knowledge-base">知识库</a>
+</div>
+</div>
+<div class="container">
+<div id="alertBox" class="alert"></div>
+<div class="stats-row" id="statsRow"><div class="loading">加载中...</div></div>
+<div class="card"><div class="card-header">设备健康度</div><div class="card-body"><div class="health-grid" id="healthGrid"><div class="loading">加载中...</div></div></div></div>
+</div>
+</div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var EQUIPMENTS = [
+{id:"east_opener",name:"东开口机",temp:"LT_LQFC_150",press:"LT_LQFC_151"},
+{id:"west_opener",name:"西开口机",temp:"LT_LQFC_173",press:"LT_LQFC_174"},
+{id:"east_plugger",name:"东堵口机",temp:"LT_LQFC_150",press:"LT_LQFC_151"},
+{id:"west_plugger",name:"西堵口机",temp:"LT_LQFC_173",press:"LT_LQFC_174"}];
+
+function api(url){return fetch(url+'&token='+APP_TOKEN).then(r=>r.json())}
+
+function loadAll(){
+loadReport();
+EQUIPMENTS.forEach(function(e){loadHealth(e);});
+loadLabelStats();
+}
+
+function loadReport(){
+api('/api/analysis/report?').then(function(d){
+var html='';
+html+='<div class="stat-card"><div class="stat-label">数据时间跨度</div><div class="stat-value">'+(d.time_span||'--')+'</div></div>';
+html+='<div class="stat-card"><div class="stat-label">检测循环数</div><div class="stat-value">'+(d.cycle_count||0)+'</div></div>';
+html+='<div class="stat-card"><div class="stat-label">设备数</div><div class="stat-value">'+(d.equipment_count||4)+'</div></div>';
+document.getElementById('statsRow').innerHTML=html;
+}).catch(function(e){showAlert('报告加载失败: '+e.message,'error')});
+}
+
+function loadHealth(eq){
+api('/api/analysis/health-metrics?equipment_id='+eq.id).then(function(d){
+var score=d.health_score||0;
+var grade=d.grade||'C';
+var barColor=score>=90?'#16a34a':score>=75?'#2563eb':score>=60?'#d97706':'#dc2626';
+var html='<div class="health-card">';
+html+='<h3>'+eq.name+' <span class="grade-'+grade+'">['+grade+'级]</span></h3>';
+html+='<div style="font-size:28px;font-weight:700;color:'+barColor+'">'+score+'<span style="font-size:14px;color:#94a3b8">/100</span></div>';
+html+='<div class="health-bar"><div class="health-bar-fill" style="width:'+score+'%;background:'+barColor+'"></div></div>';
+if(d.temperature){
+html+='<div style="font-size:12px;color:#64748b;margin-top:8px">温度: 均值 '+d.temperature.mean+'°C | 最高 '+d.temperature.max+'°C</div>';
+if(d.temperature.alerts){
+if(d.temperature.alerts.warn)html+='<div style="font-size:11px;margin-top:4px"><span class="tag tag-warn">温度偏高</span></div>';
+if(d.temperature.alerts.critical)html+='<div style="font-size:11px;margin-top:4px"><span class="tag tag-fail">温度告警</span></div>';
+}
+}
+if(d.pressure){
+html+='<div style="font-size:12px;color:#64748b;margin-top:4px">压力: 均值 '+d.pressure.mean+' MPa | 波动率 '+(d.pressure.volatility*100).toFixed(1)+'%</div>';
+}
+html+='</div>';
+var grid=document.getElementById('healthGrid');
+var old=grid.querySelector('[data-eq="'+eq.id+'"]');
+if(old)old.outerHTML=html;else grid.innerHTML+=html;
+document.querySelector('[data-eq="'+eq.id+'"]')||(grid.lastElementChild&&grid.lastElementChild.setAttribute('data-eq',eq.id));
+}).catch(function(){});
+}
+
+function loadLabelStats(){
+api('/api/analysis/labeling-stats?').then(function(d){
+// append to statsRow if exists
+}).catch(function(){});
+}
+
+function showAlert(msg,cls){
+var el=document.getElementById('alertBox');
+el.textContent=msg;el.className='alert alert-'+cls;
+setTimeout(function(){el.className='alert'},6000);
+}
+
+loadAll();
+</script>
+</body>
+</html>
