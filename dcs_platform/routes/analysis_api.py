@@ -13,7 +13,7 @@ from flask import Blueprint, request, jsonify, send_file
 
 from dcs_platform.core.influx_client import fetch_timeseries, ping
 from dcs_platform.core.config import sanitize_param_for_flux
-from dcs_platform.core.db import get_cycles, get_label_stats, export_labels
+from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, insert_cycle
 from dcs_platform.services.group_service import (
     get_group_params, get_param_label, get_all_groups, get_group_by_id,
 )
@@ -117,98 +117,194 @@ def api_cycles():
     """GET /api/analysis/cycles?start=...&end=...&type=...&token=...
     
     Detect operation cycles from InfluxDB data in the given time range.
-    Supports type=opening|plugging|all. Returns cycles with machine, type,
-    trigger_time, window_start/end, duration_s, result, metrics.
+    Uses remote command + position crossing threshold for opening,
+    remote_start + mud_cmd edge for plugging.
+    Supports type=opening|plugging|all.
     """
     start = request.args.get("start", "")
     end = request.args.get("end", "")
     cycle_type = request.args.get("type", "all")
     limit = int(request.args.get("limit", 200))
     
+    # ── 正确信号配置 ──
+    # 开口机: remote(binary 0/1) + swing_pos(穿越90°阈值)
+    # 堵口机: remote_start(binary 0/1) + mud_cmd(边沿)
+    OPENING_CONFIG = {
+        "东开口机": {"remote": "LT_LQFC_57", "swing_pos": "LT_LQFC_63",
+                      "push_pos": "LT_LQFC_67", "push_press": "LT_LQFC_68",
+                      "drill_press": "LT_LQFC_69", "impact_press": "LT_LQFC_59"},
+        "西开口机": {"remote": "LT_LQFC_94", "swing_pos": "LT_LQFC_100",
+                      "push_pos": "LT_LQFC_104", "push_press": "LT_LQFC_105",
+                      "drill_press": "LT_LQFC_124", "impact_press": "LT_LQFC_125"},
+    }
+    PLUGGING_CONFIG = {
+        "东堵口机": {"remote_start": "LT_LQFC_130", "mud_cmd": "LT_LQFC_134",
+                      "mud_pos": "LT_LQFC_137", "mud_press": "LT_LQFC_138",
+                      "mud_qty": "LT_LQFC_179", "swing_pos": "LT_LQFC_135"},
+        "西堵口机": {"remote_start": "LT_LQFC_153", "mud_cmd": "LT_LQFC_157",
+                      "mud_pos": "LT_LQFC_160", "mud_press": "LT_LQFC_161",
+                      "mud_qty": "LT_LQFC_180", "swing_pos": "LT_LQFC_158"},
+    }
+    
     cycles = []
     
-    # Equipment configs: (equipment_id, machine_label, signal_map, is_plugging)
-    equipment_configs = [
-        ("east_opener", "东开口机", "LT_LQFC_61", False),
-        ("west_opener", "西开口机", "LT_LQFC_98", False),
-        ("east_plugger", "东堵口机", "LT_LQFC_134", True),
-        ("west_plugger", "西堵口机", "LT_LQFC_157", True),
-    ]
-    
-    for eq_id, machine_label, trigger_signal, is_plugging in equipment_configs:
-        if cycle_type != "all" and (
-            (cycle_type == "opening" and is_plugging) or
-            (cycle_type == "plugging" and not is_plugging)
-        ):
-            continue
-        
-        # Get key signals for cycle detection
-        if is_plugging:
-            params = ["LT_LQFC_134", "LT_LQFC_133", "LT_LQFC_135", "LT_LQFC_137",
-                       "LT_LQFC_138", "LT_LQFC_179"] if "east" in eq_id else \
-                      ["LT_LQFC_157", "LT_LQFC_156", "LT_LQFC_158", "LT_LQFC_160",
-                       "LT_LQFC_161", "LT_LQFC_180"]
-        else:
-            params = ["LT_LQFC_61", "LT_LQFC_63", "LT_LQFC_67", "LT_LQFC_68",
-                       "LT_LQFC_69", "LT_LQFC_59"] if "east" in eq_id else \
-                      ["LT_LQFC_98", "LT_LQFC_100", "LT_LQFC_104", "LT_LQFC_105",
-                       "LT_LQFC_106", "LT_LQFC_96"]
-        
-        try:
-            data = fetch_timeseries(start, end, params, "1s", timeout_ms=60000)
-        except Exception:
-            continue
-        
-        trigger_data = data.get(trigger_signal, [])
-        if len(trigger_data) < 10:
-            continue
-        
-        # Simple cycle detection: find rising edges on trigger signal
-        in_cycle = False
-        cycle_start_time = None
-        cycle_start_idx = 0
-        min_duration_s = 30
-        max_duration_s = 3600
-        
-        for i, (t, v) in enumerate(trigger_data):
-            if i == 0:
+    # ━━━ 开口检测: remote==1 AND swing_pos 穿越 90° ━━━
+    if cycle_type in ("opening", "all"):
+        for machine, sig in OPENING_CONFIG.items():
+            all_params = list(sig.values())
+            try:
+                data = fetch_timeseries(start, end, all_params, timeout_ms=60000)
+            except Exception:
                 continue
-            prev_v = trigger_data[i-1][1]
             
-            # Detect rising edge (0.5 threshold)
-            if not in_cycle and prev_v < 0.5 and v >= 0.5:
-                in_cycle = True
-                cycle_start_time = t
-                cycle_start_idx = i
-            elif in_cycle and prev_v >= 0.5 and v < 0.5:
-                # Falling edge = cycle end
-                cycle_end_time = t
-                duration = (cycle_end_time - cycle_start_time).total_seconds()
+            remote = _build_time_map(data.get(sig["remote"], []))
+            swing = sorted(data.get(sig["swing_pos"], []), key=lambda x: x[0])
+            
+            if len(swing) < 2 or len(remote) < 2:
+                continue
+            
+            in_cycle = False
+            cycle_start = None
+            for i in range(1, len(swing)):
+                prev_v, curr_v = swing[i-1][1], swing[i][1]
+                t = swing[i][0]
+                ts = t.timestamp()
                 
-                if min_duration_s <= duration <= max_duration_s:
-                    # Extract metrics from the cycle window
-                    metrics = _extract_cycle_metrics(
-                        data, cycle_start_time, cycle_end_time, is_plugging, eq_id
-                    )
+                if not in_cycle and _crossed(prev_v, curr_v, 90):
+                    # 检查遥控信号 (±2s 容差)
+                    if _remote_nearby(remote, ts, tolerance=2):
+                        in_cycle = True
+                        cycle_start = t
                     
+                elif in_cycle and _crossed(curr_v, prev_v, 90):
+                    # 回转退出 90° = 周期结束
+                    duration = (t - cycle_start).total_seconds()
+                    if 30 <= duration <= 3600:
+                        cycles.append({
+                            "machine": machine, "type": "opening",
+                            "trigger_time": cycle_start.isoformat(),
+                            "window_start": cycle_start.isoformat(),
+                            "window_end": t.isoformat(),
+                            "duration_s": round(duration, 1),
+                            "result": "unknown", "breakthrough": False,
+                        })
+                    in_cycle = False
+                    if len(cycles) >= limit: break
+            
+            # 未闭合的周期（仍然在作业中）
+            if in_cycle and swing:
+                last_t = swing[-1][0]
+                duration = (last_t - cycle_start).total_seconds()
+                if 30 <= duration <= 3600:
                     cycles.append({
-                        "machine": machine_label,
-                        "type": "plugging" if is_plugging else "opening",
-                        "trigger_time": cycle_start_time.isoformat(),
-                        "window_start": cycle_start_time.isoformat(),
-                        "window_end": cycle_end_time.isoformat(),
+                        "machine": machine, "type": "opening",
+                        "trigger_time": cycle_start.isoformat(),
+                        "window_start": cycle_start.isoformat(),
+                        "window_end": last_t.isoformat(),
                         "duration_s": round(duration, 1),
-                        "result": metrics.get("result", "unknown"),
-                        "breakthrough": metrics.get("breakthrough", False),
-                        **metrics,
+                        "result": "unknown", "breakthrough": False,
                     })
+    
+    # ━━━ 堵口检测: remote_start==1 AND mud_cmd 边沿 ━━━
+    if cycle_type in ("plugging", "all"):
+        for machine, sig in PLUGGING_CONFIG.items():
+            all_params = list(sig.values())
+            try:
+                data = fetch_timeseries(start, end, all_params, timeout_ms=60000)
+            except Exception:
+                continue
+            
+            remote_start = _build_time_map(data.get(sig["remote_start"], []))
+            mud_cmd = sorted(data.get(sig["mud_cmd"], []), key=lambda x: x[0])
+            
+            if len(mud_cmd) < 2 or len(remote_start) < 2:
+                continue
+            
+            in_cycle = False
+            cycle_start = None
+            for i in range(1, len(mud_cmd)):
+                prev_v, curr_v = mud_cmd[i-1][1], mud_cmd[i][1]
+                t = mud_cmd[i][0]
+                ts = t.timestamp()
                 
-                in_cycle = False
-                if len(cycles) >= limit:
-                    break
+                # Rising edge on mud_cmd (0→1)
+                if not in_cycle and prev_v < 0.5 and curr_v >= 0.5:
+                    if _remote_nearby(remote_start, ts, tolerance=2):
+                        in_cycle = True
+                        cycle_start = t
+                
+                # Falling edge (1→0) = cycle end
+                elif in_cycle and prev_v >= 0.5 and curr_v < 0.5:
+                    duration = (t - cycle_start).total_seconds()
+                    if 30 <= duration <= 3600:
+                        cycles.append({
+                            "machine": machine, "type": "plugging",
+                            "trigger_time": cycle_start.isoformat(),
+                            "window_start": cycle_start.isoformat(),
+                            "window_end": t.isoformat(),
+                            "duration_s": round(duration, 1),
+                            "result": "unknown", "hold_ok": False,
+                        })
+                    in_cycle = False
+                    if len(cycles) >= limit: break
+            
+            if in_cycle and mud_cmd:
+                last_t = mud_cmd[-1][0]
+                duration = (last_t - cycle_start).total_seconds()
+                if 30 <= duration <= 3600:
+                    cycles.append({
+                        "machine": machine, "type": "plugging",
+                        "trigger_time": cycle_start.isoformat(),
+                        "window_start": cycle_start.isoformat(),
+                        "window_end": last_t.isoformat(),
+                        "duration_s": round(duration, 1),
+                        "result": "unknown", "hold_ok": False,
+                    })
     
     cycles.sort(key=lambda c: c["trigger_time"])
-    return jsonify({"cycles": cycles[:limit], "count": len(cycles)})
+    
+    # ── 去重并存入数据库 ──
+    saved_count = 0
+    if cycles:
+        _saved = set()
+        try:
+            existing = get_cycles(limit=50000)
+            _saved = {(c["equipment_id"], c["cycle_type"], c["start_time"]) for c in existing}
+        except Exception:
+            pass
+        for c in cycles:
+            key = (c["machine"], c["type"], c["window_start"])
+            if key not in _saved:
+                try:
+                    insert_cycle(c["machine"], c["type"], c["window_start"],
+                                 c["window_end"], c["duration_s"], 0.8)
+                    _saved.add(key)
+                    saved_count += 1
+                except Exception:
+                    pass
+    
+    return jsonify({
+        "cycles": cycles[:limit],
+        "count": len(cycles),
+        "saved_to_db": saved_count
+    })
+
+
+def _build_time_map(pairs):
+    """将 [(datetime, float), ...] 转为 {timestamp: value} 字典"""
+    return {t.timestamp(): v for t, v in pairs}
+
+def _crossed(prev_val, curr_val, threshold):
+    """检查是否穿越阈值"""
+    return (prev_val < threshold and curr_val >= threshold) or \
+           (prev_val > threshold and curr_val <= threshold)
+
+def _remote_nearby(rem_map, target_ts, tolerance=2):
+    """检查 target_ts ± tolerance 秒内遥控信号是否为 1"""
+    for offset in range(-tolerance, tolerance + 1):
+        if rem_map.get(target_ts + offset, 0) >= 0.5:
+            return True
+    return False
 
 
 @analysis_bp.route("/pressure-position")
