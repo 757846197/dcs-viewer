@@ -15,7 +15,9 @@ from dcs_platform.core.influx_client import fetch_timeseries, ping
 from dcs_platform.core.config import sanitize_param_for_flux
 from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, insert_cycle, \
     get_detect_configs, get_detect_config, get_default_detect_config, \
-    upsert_detect_config, toggle_detect_config, delete_detect_config
+    upsert_detect_config, toggle_detect_config, delete_detect_config, \
+    get_tuning_config, update_tuning_config, get_tuning_runs, get_tuning_run, \
+    get_tuning_history, insert_tuning_run, insert_tuning_history
 from dcs_platform.services.group_service import (
     get_group_params, get_param_label, get_all_groups, get_group_by_id,
 )
@@ -116,6 +118,52 @@ def api_default_detect_config():
     cycle_type = request.args.get("type", "opening")
     config = get_default_detect_config(cycle_type)
     return jsonify({"config": config})
+
+
+# ===== 自整定 API =====
+
+@analysis_bp.route("/tuning/config", methods=["GET", "POST"])
+def api_tuning_config():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        update_tuning_config(**{k: v for k, v in data.items()
+                              if k in ("auto_mode", "schedule_hour", "eval_min_samples",
+                                       "min_accuracy", "max_false_rate")})
+    return jsonify({"config": get_tuning_config()})
+
+
+@analysis_bp.route("/tuning/trigger", methods=["POST"])
+def api_tuning_trigger():
+    """手动触发一次自整定"""
+    data = request.get_json(silent=True) or {}
+    cycle_type = data.get("cycle_type", "opening")
+    from dcs_platform.services.self_tuning import run_self_tuning
+    result = run_self_tuning(cycle_type, "manual")
+    return jsonify(result)
+
+
+@analysis_bp.route("/tuning/runs")
+def api_tuning_runs():
+    cycle_type = request.args.get("type", "").strip() or None
+    runs = get_tuning_runs(cycle_type=cycle_type)
+    return jsonify({"runs": runs, "count": len(runs)})
+
+
+@analysis_bp.route("/tuning/runs/<int:run_id>")
+def api_tuning_run_detail(run_id):
+    run = get_tuning_run(run_id)
+    if not run:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"run": run})
+
+
+@analysis_bp.route("/tuning/history")
+def api_tuning_history():
+    config_id = request.args.get("config_id", "").strip() or None
+    if config_id:
+        config_id = int(config_id)
+    history = get_tuning_history(config_id=config_id)
+    return jsonify({"history": history, "count": len(history)})
 
 
 @analysis_bp.route("/equipment")

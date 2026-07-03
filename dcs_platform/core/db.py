@@ -175,6 +175,46 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now'))
         );
 
+        -- 自整定运行记录
+        CREATE TABLE IF NOT EXISTS tuning_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER REFERENCES detect_configs(id),
+            cycle_type TEXT NOT NULL,
+            status TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
+            run_mode TEXT DEFAULT 'auto' CHECK(run_mode IN ('auto','manual')),
+            started_at TEXT DEFAULT (datetime('now')),
+            finished_at TEXT,
+            -- 各阶段结果 (JSON)
+            collect_stats TEXT,    -- {signal_count, time_range, ...}
+            analysis_result TEXT,  -- {features: [...], patterns: [...]}
+            tuned_params TEXT,     -- {rules: [...], filter_min_s, filter_max_s}
+            eval_result TEXT,      -- {accuracy, false_positive_rate, samples, ...}
+            error_message TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS tuning_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER REFERENCES detect_configs(id),
+            run_id INTEGER REFERENCES tuning_runs(id),
+            param_name TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT NOT NULL,
+            change_reason TEXT,
+            changed_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS tuning_config (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            auto_mode INTEGER DEFAULT 1,        -- 0=手动, 1=自动
+            schedule_hour INTEGER DEFAULT 2,     -- 每日触发时间(UTC)
+            eval_min_samples INTEGER DEFAULT 10, -- 评估最少样本数
+            min_accuracy REAL DEFAULT 0.7,       -- 最低准确率要求
+            max_false_rate REAL DEFAULT 0.15,    -- 最大误报率
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        INSERT OR IGNORE INTO tuning_config(id) VALUES(1);
+
         -- 模型训练记录
         CREATE TABLE IF NOT EXISTS model_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -593,5 +633,86 @@ def toggle_detect_config(config_id, enabled):
 def delete_detect_config(config_id):
     _get_conn().execute("DELETE FROM detect_configs WHERE id=?", (config_id,))
     _get_conn().commit()
+
+
+# ===================================================================
+#  自整定 CRUD
+# ===================================================================
+
+def get_tuning_config():
+    r = _get_conn().execute("SELECT * FROM tuning_config WHERE id=1").fetchone()
+    return dict(r) if r else {"auto_mode": 1, "schedule_hour": 2, "eval_min_samples": 10, "min_accuracy": 0.7, "max_false_rate": 0.15}
+
+def update_tuning_config(**kwargs):
+    allowed = ["auto_mode", "schedule_hour", "eval_min_samples", "min_accuracy", "max_false_rate"]
+    updates = []
+    args = []
+    for k in allowed:
+        if k in kwargs:
+            updates.append(f"{k}=?")
+            args.append(kwargs[k])
+    if updates:
+        updates.append("updated_at=datetime('now')")
+        _get_conn().execute(f"UPDATE tuning_config SET {','.join(updates)} WHERE id=1", args)
+        _get_conn().commit()
+
+def insert_tuning_run(config_id, cycle_type, run_mode="auto"):
+    c = _get_conn().execute(
+        "INSERT INTO tuning_runs(config_id,cycle_type,status,run_mode) VALUES(?,?,?,?)",
+        (config_id, cycle_type, "running", run_mode))
+    _get_conn().commit()
+    return c.lastrowid
+
+def update_tuning_run(run_id, **kwargs):
+    allowed = ["status", "finished_at", "collect_stats", "analysis_result", "tuned_params", "eval_result", "error_message"]
+    updates = []
+    args = []
+    for k in allowed:
+        if k in kwargs and kwargs[k] is not None:
+            updates.append(f"{k}=?")
+            args.append(json.dumps(kwargs[k]) if isinstance(kwargs[k], (dict, list)) else kwargs[k])
+    if updates:
+        args.append(run_id)
+        _get_conn().execute(f"UPDATE tuning_runs SET {','.join(updates)} WHERE id=?", args)
+        _get_conn().commit()
+
+def get_tuning_runs(cycle_type=None, limit=20):
+    q = "SELECT * FROM tuning_runs WHERE 1=1"
+    args = []
+    if cycle_type:
+        q += " AND cycle_type=?"; args.append(cycle_type)
+    q += " ORDER BY started_at DESC LIMIT ?"; args.append(limit)
+    rows = _get_conn().execute(q, args).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        for f in ("collect_stats", "analysis_result", "tuned_params", "eval_result"):
+            try: d[f] = json.loads(d[f]) if d.get(f) else None
+            except: pass
+        result.append(d)
+    return result
+
+def get_tuning_run(run_id):
+    r = _get_conn().execute("SELECT * FROM tuning_runs WHERE id=?", (run_id,)).fetchone()
+    if not r: return None
+    d = dict(r)
+    for f in ("collect_stats", "analysis_result", "tuned_params", "eval_result"):
+        try: d[f] = json.loads(d[f]) if d.get(f) else None
+        except: pass
+    return d
+
+def insert_tuning_history(config_id, run_id, param_name, old_value, new_value, change_reason=""):
+    _get_conn().execute(
+        "INSERT INTO tuning_history(config_id,run_id,param_name,old_value,new_value,change_reason) VALUES(?,?,?,?,?,?)",
+        (config_id, run_id, param_name, str(old_value) if old_value else "", str(new_value), change_reason))
+    _get_conn().commit()
+
+def get_tuning_history(config_id=None, limit=50):
+    q = "SELECT * FROM tuning_history WHERE 1=1"
+    args = []
+    if config_id:
+        q += " AND config_id=?"; args.append(config_id)
+    q += " ORDER BY changed_at DESC LIMIT ?"; args.append(limit)
+    return [dict(r) for r in _get_conn().execute(q, args).fetchall()]
 
 init_db()

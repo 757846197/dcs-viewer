@@ -2096,8 +2096,17 @@ if __name__ == "__main__":
     print(f"  趋势分析:   http://localhost:{FLASK_PORT}/trend")
     print(f"  作业分析:   http://localhost:{FLASK_PORT}/analysis")
     print(f"  循环标注:   http://localhost:{FLASK_PORT}/labeling")
+    print(f"  检测规则:   http://localhost:{FLASK_PORT}/detect-config")
     print(f"  API 认证:   {'已启用 (APP_TOKEN)' if APP_TOKEN else '[WARN] 未启用 (仅内网安全)'}")
     print()
+
+    # 启动自整定调度器
+    try:
+        from dcs_platform.services.self_tuning import start_scheduler
+        start_scheduler()
+        print("  [Tuning] 自整定调度器已启动")
+    except Exception as e:
+        print(f"  [Tuning] 调度器启动失败: {e}")
 
     # 自动打开浏览器
     if not getattr(sys, 'frozen', False):

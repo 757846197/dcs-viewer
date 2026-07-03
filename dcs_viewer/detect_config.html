@@ -103,6 +103,51 @@ td{padding:10px 12px;border-bottom:1px solid #f1f5f9}
                 </table>
             </div>
         </div>
+
+        <!-- 自整定面板 -->
+        <div class="card">
+            <div class="card-header">
+                AI 自整定引擎
+                <span id="tuningModeBadge" style="font-size:11px;margin-left:12px"></span>
+                <button class="btn btn-primary" style="margin-left:auto" id="btnTuningTrigger" onclick="triggerTuning()">触发手动整定</button>
+            </div>
+            <div class="card-body">
+                <div class="form-row">
+                    <div class="form-group" style="flex:0 0 180px">
+                        <label>整定类型</label>
+                        <select id="tuningType">
+                            <option value="opening">开口检测</option>
+                            <option value="plugging">堵口检测</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:0 0 140px">
+                        <label>模式</label>
+                        <select id="tuningMode" onchange="saveTuningMode()">
+                            <option value="1">自动模式</option>
+                            <option value="0">手动模式</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:0 0 130px">
+                        <label>每日触发(UTC)</label>
+                        <select id="tuningHour" onchange="saveTuningMode()">
+                            <option value="0">00:00</option><option value="2" selected>02:00</option>
+                            <option value="4">04:00</option><option value="6">06:00</option>
+                            <option value="18">18:00</option><option value="20">20:00</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:0 0 100px">
+                        <label>最低准确率</label>
+                        <input type="number" id="tuningMinAcc" value="0.7" step="0.05" min="0.5" max="0.95" onchange="saveTuningMode()">
+                    </div>
+                </div>
+
+                <div style="font-size:12px;font-weight:600;color:#64748b;margin:12px 0 8px">整定运行历史</div>
+                <div style="max-height:240px;overflow-y:auto">
+                    <table><thead><tr><th>类型</th><th>模式</th><th>状态</th><th>准确率</th><th>误报率</th><th>开始时间</th></tr></thead>
+                    <tbody id="tuningRunBody"><tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:16px">加载中...</td></tr></tbody></table>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -302,6 +347,87 @@ function renderRules(){
 }
 
 loadConfigs();
+loadTuningStatus();
+loadTuningHistory();
+
+// ========== 自整定 ==========
+var tuningRunning = false;
+
+function loadTuningStatus(){
+    _api('/api/analysis/tuning/config').then(function(d){
+        var c = d.config || {};
+        document.getElementById('tuningMode').value = c.auto_mode ? '1' : '0';
+        document.getElementById('tuningHour').value = c.schedule_hour || 2;
+        document.getElementById('tuningMinAcc').value = c.min_accuracy || 0.7;
+        var badge = document.getElementById('tuningModeBadge');
+        badge.textContent = '[' + (c.auto_mode ? '自动模式' : '手动模式') + ']';
+        badge.style.cssText = 'color:' + (c.auto_mode ? '#166534' : '#92400e') + ';background:' + (c.auto_mode ? '#f0fdf4' : '#fffbeb') + ';padding:2px 8px;border-radius:10px';
+    }).catch(function(e){console.log('tuning config load failed:', e)});
+}
+
+function saveTuningMode(){
+    var body = {
+        auto_mode: parseInt(document.getElementById('tuningMode').value),
+        schedule_hour: parseInt(document.getElementById('tuningHour').value),
+        min_accuracy: parseFloat(document.getElementById('tuningMinAcc').value)
+    };
+    _api('/api/analysis/tuning/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+        .then(function(){loadTuningStatus();showAlert('设置已保存','ok')})
+        .catch(function(e){showAlert('保存失败: '+e.message,'error')});
+}
+
+function triggerTuning(){
+    if(tuningRunning){showAlert('整定进行中，请稍候...','info');return}
+    var cycleType = document.getElementById('tuningType').value;
+    if(!confirm('即将对 '+(cycleType==='opening'?'开口':'堵口')+' 检测执行自整定，大约需要30秒-2分钟，确认继续？')) return;
+    tuningRunning = true;
+    var btn = document.getElementById('btnTuningTrigger');
+    btn.disabled = true;
+    btn.textContent = '整定中...';
+    showAlert('自整定已开始，请耐心等待...', 'info');
+
+    _api('/api/analysis/tuning/trigger', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cycle_type:cycleType})})
+        .then(function(d){
+            tuningRunning = false;
+            btn.disabled = false;
+            btn.textContent = '触发手动整定';
+            if(d.status === 'completed'){
+                showAlert('自整定完成！准确率: '+((d.accuracy||0)*100).toFixed(1)+'%', 'ok');
+            }else{
+                showAlert('自整定未达标: 准确率 '+((d.accuracy||0)*100).toFixed(1)+'% 低于阈值', 'error');
+            }
+            loadConfigs();
+            loadTuningHistory();
+        })
+        .catch(function(e){
+            tuningRunning = false;
+            btn.disabled = false;
+            btn.textContent = '触发手动整定';
+            showAlert('自整定失败: '+e.message, 'error');
+        });
+}
+
+function loadTuningHistory(){
+    _api('/api/analysis/tuning/runs?limit=10').then(function(d){
+        var runs = d.runs || [];
+        var html = '';
+        runs.forEach(function(r){
+            var statusTag = r.status === 'completed' ? '<span class="tag tag-ok">完成</span>' :
+                           r.status === 'running' ? '<span class="tag" style="background:#eff6ff;color:#2563eb">运行中</span>' :
+                           '<span class="tag tag-off">失败</span>';
+            var evalR = r.eval_result || {};
+            html += '<tr>';
+            html += '<td>'+(r.cycle_type==='opening'?'开口':'堵口')+'</td>';
+            html += '<td>'+(r.run_mode==='auto'?'自动':'手动')+'</td>';
+            html += '<td>'+statusTag+'</td>';
+            html += '<td>'+(evalR.accuracy!=null?(evalR.accuracy*100).toFixed(1)+'%':'--')+'</td>';
+            html += '<td>'+(evalR.false_positive_rate!=null?(evalR.false_positive_rate*100).toFixed(1)+'%':'--')+'</td>';
+            html += '<td style="font-size:11px;color:#94a3b8">'+(r.started_at||'--')+'</td>';
+            html += '</tr>';
+        });
+        document.getElementById('tuningRunBody').innerHTML = html || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:16px">暂无记录</td></tr>';
+    }).catch(function(e){console.log('tuning history load failed:', e)});
+}
 </script>
 </body>
 </html>
