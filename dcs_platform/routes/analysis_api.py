@@ -151,9 +151,10 @@ def api_cycles():
     # ━━━ 开口检测: remote==1 AND swing_pos 穿越 90° ━━━
     if cycle_type in ("opening", "all"):
         for machine, sig in OPENING_CONFIG.items():
-            all_params = list(sig.values())
+            # 只查检测必需的两个信号，加快速度
+            detect_params = [sig["remote"], sig["swing_pos"]]
             try:
-                data = fetch_timeseries(start, end, all_params, timeout_ms=60000)
+                data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
             except Exception:
                 continue
             
@@ -208,9 +209,9 @@ def api_cycles():
     # ━━━ 堵口检测: remote_start==1 AND mud_cmd 边沿 ━━━
     if cycle_type in ("plugging", "all"):
         for machine, sig in PLUGGING_CONFIG.items():
-            all_params = list(sig.values())
+            detect_params = [sig["remote_start"], sig["mud_cmd"]]
             try:
-                data = fetch_timeseries(start, end, all_params, timeout_ms=60000)
+                data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
             except Exception:
                 continue
             
