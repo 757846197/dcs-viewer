@@ -45,6 +45,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .card-header .close-btn { margin-left: auto; cursor: pointer; font-size: 18px; color: #94a3b8; background: none; border: none; line-height: 1; padding: 0 4px; }
 .card-header .close-btn:hover { color: #ff4d4f; }
 
+.filter-card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 24px; overflow: hidden; }
+.filter-card .filter-bar { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; padding: 20px 24px; }
+.filter-card .filter-group { flex: 1; min-width: 130px; display: flex; flex-direction: column; gap: 6px; }
+.filter-card .filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
+.filter-card .filter-group input, .filter-card .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; width: 100%; }
+.filter-card .filter-group input:focus, .filter-card .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+.filter-card .btn { margin-bottom: 0; height: 38px; }
+
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .filter-group { display: flex; flex-direction: column; gap: 5px; }
 .filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
@@ -98,7 +106,7 @@ tr.row-labeled { background: #f0fdf4; }
 .pagination button.active { background: #1677ff; color: #fff; border-color: #1677ff; }
 .pagination .page-info { font-size: 12px; color: #94a3b8; margin: 0 8px; }
 
-.two-panel { display: flex; gap: 16px; }
+.two-panel { display: flex; gap: 16px; margin-top: 8px; }
 .two-panel .panel-left { flex: 1; min-width: 0; }
 .two-panel .panel-right { width: 380px; min-width: 380px; }
 
@@ -186,20 +194,23 @@ tr.row-labeled { background: #f0fdf4; }
             <div class="stat-card"><div class="stat-label">总循环数</div><div class="stat-value" id="statTotal">--</div></div>
         </div>
 
-        <div class="filter-bar">
-            <div class="filter-group"><label>设备</label>
-                <select id="fEquipment"><option value="">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
+        <div class="filter-card">
+            <div class="card-header">筛选条件</div>
+            <div class="filter-bar">
+                <div class="filter-group"><label>设备</label>
+                    <select id="fEquipment"><option value="">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
+                </div>
+                <div class="filter-group"><label>循环类型</label>
+                    <select id="fCycleType"><option value="">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
+                </div>
+                <div class="filter-group"><label>标注状态</label>
+                    <select id="fLabelStatus"><option value="">全部</option><option value="labeled">已标注</option><option value="unlabeled">未标注</option></select>
+                </div>
+                <div class="filter-group"><label>每页数量</label>
+                    <select id="fPerPage"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select>
+                </div>
+                <button class="btn btn-primary" onclick="loadCycles(1)" id="btnLoad">查询循环</button>
             </div>
-            <div class="filter-group"><label>循环类型</label>
-                <select id="fCycleType"><option value="">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
-            </div>
-            <div class="filter-group"><label>标注状态</label>
-                <select id="fLabelStatus"><option value="">全部</option><option value="labeled">已标注</option><option value="unlabeled">未标注</option></select>
-            </div>
-            <div class="filter-group"><label>每页数量</label>
-                <select id="fPerPage"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select>
-            </div>
-            <button class="btn btn-primary" onclick="loadCycles(1)" id="btnLoad">查询循环</button>
         </div>
 
         <div class="two-panel">
