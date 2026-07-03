@@ -322,8 +322,15 @@ checkLogin();
 function checkInfluxDB(){
     fetch('/api/analysis/ping?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
         var el=document.getElementById('sysStatus');
-        if(d.reachable){el.style.background='#52c41a';el.style.boxShadow='0 0 4px rgba(82,196,26,0.5)';}
-        else{el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';showAlert('InfluxDB unreachable: '+d.message,'error');}
+        var reachable = d.reachable || d.influxdb;
+        if(reachable){
+            el.style.background='#52c41a';
+            el.style.boxShadow='0 0 4px rgba(82,196,26,0.5)';
+        }else{
+            el.style.background='#ff4d4f';
+            el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';
+            showAlert('InfluxDB 连接失败: '+(d.message||'无响应'),'error');
+        }
     }).catch(function(e){
         var el=document.getElementById('sysStatus');
         el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';
