@@ -5,11 +5,14 @@ DCS 数据分析平台 — 开口机/堵口机专用查询工具
 import functools
 import io
 import json
+import logging
 import os
 import sys
 import threading
 import time as _time
 import webbrowser
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -42,21 +45,21 @@ from pathlib import Path as _Path
 def _get_exe_dir():
     if getattr(sys, 'frozen', False):
         return _Path(sys.executable).parent
-    return _Path(__file__).resolve().parent
+    return _Path(__file__).resolve().parent.parent  # 项目根目录 (非 dcs_viewer/)
 
 _EXE_DIR_CFG = _get_exe_dir()
 _CONFIG_FILE = _EXE_DIR_CFG / "dcs_config.json"
 
 _DEFAULTS_CFG = {
     "INFLUX_URL": "http://10.56.128.202:8086",
-    "INFLUX_TOKEN": "odx3aMiszU2cZd5PvvoexXYEXOcR-yJ0opTnXixC38TRttY2xHY-84lyRdC7MPIWgK2IAkoS4ZnPPsNBBFWZEA==",
+    "INFLUX_TOKEN": "",
     "INFLUX_ORG": "myOrg",
     "INFLUX_BUCKET": "islag",
     "INFLUX_TIMEOUT_MS": 180000,
     "FLASK_HOST": "0.0.0.0",
     "FLASK_PORT": 5000,
-    "APP_TOKEN": "dcs2026",
-    "SETTINGS_PASSWORD": "123456",
+    "APP_TOKEN": "",
+    "SETTINGS_PASSWORD": "admin123",
 }
 
 def _load_cfg():
@@ -65,6 +68,12 @@ def _load_cfg():
         env_val = os.environ.get(k)
         if env_val is not None:
             cfg[k] = env_val
+    # 首次运行 PyInstaller 打包版：自动从 _MEIPASS 释放 dcs_config.json 到 EXE 同目录
+    if getattr(sys, 'frozen', False) and not _CONFIG_FILE.exists():
+        import shutil as _shutil
+        _bundle_cfg = _Path(sys._MEIPASS) / "dcs_config.json"
+        if _bundle_cfg.exists():
+            _shutil.copy(_bundle_cfg, _CONFIG_FILE)
     if _CONFIG_FILE.exists():
         try:
             with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -72,8 +81,8 @@ def _load_cfg():
             for k, v in saved.items():
                 if k in cfg:
                     cfg[k] = v
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("配置文件解析失败，使用默认值: %s", e)
     return cfg
 
 _cfg = _load_cfg()
@@ -96,14 +105,16 @@ EXPORT_CHUNK_HOURS = 1
 LOCAL_TZ_OFFSET_HOURS = 8
 
 def save_runtime_config(data: dict):
+    # 白名单：仅允许写入已知的配置 key，防止注入攻击
+    _ALLOWED_KEYS = set(_DEFAULTS_CFG.keys())
     current = {}
     if _CONFIG_FILE.exists():
         try:
             with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
                 current = _json.load(f)
-        except Exception:
-            pass
-    current.update({k: v for k, v in data.items() if v != "" and v is not None})
+        except Exception as e:
+            logger.warning("配置文件读取失败，使用空配置: %s", e)
+    current.update({k: v for k, v in data.items() if k in _ALLOWED_KEYS and v != "" and v is not None})
     with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
         _json.dump(current, f, indent=2)
     global INFLUX_URL, INFLUX_TOKEN, INFLUX_ORG, INFLUX_BUCKET, INFLUX_TIMEOUT_MS, FLASK_HOST, FLASK_PORT, APP_TOKEN, SETTINGS_PASSWORD
@@ -129,25 +140,33 @@ def get_current_config() -> dict:
         "APP_TOKEN": "***" + APP_TOKEN[-4:] if len(APP_TOKEN) > 4 else "***",
     }
 
-_PARAM_NAME_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+# === 从 dcs_platform 导入已验证的工具函数（避免重复定义） ===
+try:
+    from dcs_platform.core.config import (
+        validate_param_name, validate_params,
+        sanitize_param_for_flux, check_config,
+    )
+except ImportError:
+    # PyInstaller 打包时 dcs_platform 可能未在路径中，保留 fallback
+    _PARAM_NAME_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
-def validate_param_name(name: str) -> str:
-    if not _PARAM_NAME_RE.match(name):
-        raise ValueError(f"非法参数名: {name}")
-    return name
+    def validate_param_name(name: str) -> str:
+        if not _PARAM_NAME_RE.match(name):
+            raise ValueError(f"非法参数名: {name}")
+        return name
 
-def validate_params(param_list: list[str]) -> list[str]:
-    return [validate_param_name(p) for p in param_list]
+    def validate_params(param_list: list[str]) -> list[str]:
+        return [validate_param_name(p) for p in param_list]
 
-def sanitize_param_for_flux(param_list: list[str]) -> str:
-    validated = validate_params(param_list)
-    return " or ".join([f'r.param == "{p}"' for p in validated])
+    def sanitize_param_for_flux(param_list: list[str]) -> str:
+        validated = validate_params(param_list)
+        return " or ".join([f'r.param == "{p}"' for p in validated])
 
-def check_config() -> list[str]:
-    warnings = []
-    if not INFLUX_TOKEN:
-        warnings.append("[WARN] INFLUX_TOKEN 未设置 — InfluxDB 连接将失败")
-    return warnings
+    def check_config() -> list[str]:
+        warnings = []
+        if not INFLUX_TOKEN:
+            warnings.append("[WARN] INFLUX_TOKEN 未设置 — InfluxDB 连接将失败")
+        return warnings
 
 # === 把所有 config 符号注入到 _config_mod 模块对象（替代 import 语法） ===
 _config_mod.INFLUX_URL = INFLUX_URL
@@ -197,6 +216,65 @@ get_current_config = get_current_config
 app = Flask(__name__)
 app.secret_key = "dcs-viewer-key-20260701"
 
+from dcs_platform.routes.rules_api import rules_bp
+from dcs_platform.routes.knowledge_api import knowledge_bp
+from dcs_platform.routes.training_api import training_bp
+from dcs_platform.routes.analysis_api import analysis_bp
+from dcs_platform.routes.labeling_api import labeling_bp
+app.register_blueprint(rules_bp)
+app.register_blueprint(knowledge_bp)
+app.register_blueprint(training_bp)
+app.register_blueprint(analysis_bp)
+app.register_blueprint(labeling_bp)
+
+# === PyInstaller 静态文件服务：优先从 _MEIPASS 加载，fallback 到文件系统 ===
+from flask import send_from_directory as _send_from_directory
+
+@app.route("/static/<path:filename>")
+def _serve_static(filename):
+    # 1) PyInstaller 打包：_MEIPASS 中查找
+    if getattr(sys, 'frozen', False):
+        _bundle_static = _Path(sys._MEIPASS) / "dcs_viewer" / "static"
+        _fp = _bundle_static / filename
+        if _fp.exists():
+            return _send_from_directory(str(_bundle_static), filename)
+    # 2) 开发模式：文件系统中的 static 目录
+    for _root in [_EXE_DIR / "dcs_viewer" / "static", _BASE_DIR / "dcs_viewer" / "static",
+                  _BASE_DIR / "static"]:
+        _fp = _root / filename
+        if _fp.exists():
+            return _send_from_directory(str(_root), filename)
+    return "File not found", 404
+
+
+# === 调试端点（检查配置值，发布前可删除）===
+@app.route("/debug-config")
+def _debug_config():
+    return jsonify({
+        "SETTINGS_PASSWORD": repr(SETTINGS_PASSWORD),
+        "match_admin123": SETTINGS_PASSWORD == "admin123",
+        "APP_TOKEN": repr(APP_TOKEN),
+    })
+
+
+def _auto_seed_rules():
+    try:
+        from dcs_platform.core.db import _get_conn, upsert_rule_group, insert_rule
+        conn = _get_conn()
+        if conn.execute("SELECT COUNT(*) as n FROM rule_groups").fetchone()["n"] > 0: return
+        PLUG=[("打泥超压报警","打泥压力>25MPa持续3s","AND",10,[("LT_LQFC_138","gt",25.0,3.0,">25MPa@3s")]),("打泥量过低","打泥量<0.5L","AND",7,[("LT_LQFC_179","lt",0.5,0,"<0.5L")]),("退炮压力异常","退炮压力>20MPa","AND",6,[("LT_LQFC_140","gt",20.0,1.0,">20MPa")]),("液压站温度告警","液压温度>55C","AND",2,[("LT_LQFC_150","gt",55.0,0,">55C")]),("液压站温度严重告警","液压温度>60C","AND",3,[("LT_LQFC_150","gt",60.0,0,">60C")]),("液压站压力异常","压力[70,130]bar外","OR",2,[("LT_LQFC_151","lt",70.0,0,"<70bar"),("LT_LQFC_151","gt",130.0,0,">130bar")])]
+        OPEN=[("推进压力变化率异常","变化率>50MPa/s","AND",7,[("LT_LQFC_68","change_rate_gt",50.0,0,">50MPa/s")]),("冲击压力过高","冲击压力>18MPa","AND",6,[("LT_LQFC_88","gt",18.0,1.0,">18MPa")]),("转钎压力过高","转钎压力>15MPa","AND",6,[("LT_LQFC_87","gt",15.0,1.0,">15MPa")]),("出铁间隔过短","间隔<20min","AND",6,[("_prev.tapping_interval_min","lt",20.0,0,"<20min")]),("上次堵口打泥量偏高","打泥量>90L","AND",5,[("_prev.mud_quantity","gt",90.0,0,">90L")]),("液压站温度告警","液压温度>55C","AND",2,[("LT_LQFC_150","gt",55.0,0,">55C")]),("液压站温度严重告警","液压温度>60C","AND",3,[("LT_LQFC_150","gt",60.0,0,">60C")]),("液压站压力异常","压力[70,130]bar外","OR",2,[("LT_LQFC_151","lt",70.0,0,"<70bar"),("LT_LQFC_151","gt",130.0,0,">130bar")])]
+        for nm,desc,logic,pri,rules in PLUG:
+            gid=upsert_rule_group(None,"plugging",nm,desc,logic,pri)
+            for pn,op,tv,dur,rn in rules: insert_rule(gid,pn,op,tv,rn,None,dur)
+        for nm,desc,logic,pri,rules in OPEN:
+            gid=upsert_rule_group(None,"opening",nm,desc,logic,pri)
+            for pn,op,tv,dur,rn in rules: insert_rule(gid,pn,op,tv,rn,None,dur)
+        conn.commit()
+        print("[INFO] Auto-seeded 6 plugging + 8 opening rules")
+    except Exception as e: print(f"[WARN] Auto-seed: {e}")
+_auto_seed_rules()
+
 # === 登录验证装饰器 ===
 Compress(app)
 app.config["COMPRESS_ALGORITHM"] = "gzip"
@@ -212,7 +290,7 @@ def _check_api_auth():
     """对所有 /api/ 路由做 Token 认证（登录/设置认证绕过）"""
     if not request.path.startswith("/api/"):
         return None
-    if request.path in ("/api/login", "/api/settings/auth"):
+    if request.path in ("/api/login", "/api/settings/auth", "/api/debug/config"):
         return None  # 登录/设置认证不需要 API Token
     if not APP_TOKEN:
         return None
@@ -223,709 +301,49 @@ def _check_api_auth():
 
 # === 加载参数分组 ===
 # PyInstaller: --add-data "dcs_viewer/param_groups.json;dcs_viewer" → {_MEIPASS}/dcs_viewer/param_groups.json
-GROUPS_FILE = _BASE_DIR / "dcs_viewer" / "param_groups.json"
-if not GROUPS_FILE.exists():
-    GROUPS_FILE = _BASE_DIR / "param_groups.json"
-if not GROUPS_FILE.exists():
-    GROUPS_FILE = _EXE_DIR / "param_groups.json"
+GROUPS_FILE = None
+for _candidate in [
+    _BASE_DIR / "dcs_viewer" / "param_groups.json",
+    _BASE_DIR / "param_groups.json",
+    _EXE_DIR / "param_groups.json",
+]:
+    if _candidate.exists():
+        GROUPS_FILE = _candidate
+        break
+if getattr(sys, 'frozen', False) and GROUPS_FILE is None:
+    _bundle = _Path(sys._MEIPASS) / "dcs_viewer" / "param_groups.json"
+    if _bundle.exists():
+        GROUPS_FILE = _bundle
+if GROUPS_FILE is None:
+    raise FileNotFoundError("param_groups.json not found")
 with open(GROUPS_FILE, "r", encoding="utf-8") as f:
     PARAM_CONFIG = json.load(f)
 
 # === 性能优化：预映射标签，避免每个记录都查字典 ===
 _LABELS = PARAM_CONFIG.get("labels", {})
 
-INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DCS 开口机/堵口机 数据分析平台</title>
-<link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+def _load_html_template(filename):
+    candidates = [
+        _EXE_DIR / "dcs_viewer" / "templates" / filename,
+        _EXE_DIR / "dcs_viewer" / filename,
+        _BASE_DIR / "dcs_viewer" / "templates" / filename,
+        _BASE_DIR / "dcs_viewer" / filename,
+        _EXE_DIR / filename,
+        _BASE_DIR / filename,
+        Path(__file__).resolve().parent / filename,
+    ]
+    if getattr(sys, "frozen", False):
+        candidates.insert(0, Path(sys._MEIPASS) / "dcs_viewer" / "templates" / filename)
+        candidates.insert(1, Path(sys._MEIPASS) / "dcs_viewer" / filename)
+    for p in candidates:
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as fh: return fh.read()
+    return None
+RULES_OPENING_HTML = _load_html_template("rules_opening.html") or ""
+RULES_PLUGGING_HTML = _load_html_template("rules_plugging.html") or ""
+KNOWLEDGE_BASE_HTML = _load_html_template("knowledge_base.html") or ""
 
-/* === 左侧导航 (阿里云风格深色侧栏) === */
-.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
-.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
-.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
-.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
-.nav-section { padding: 12px 0; }
-.nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
-.nav-item { display: flex; align-items: center; gap: 10px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); }
-.nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
-.nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
-.nav-item .count { margin-left: auto; background: rgba(255,255,255,0.1); font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
-.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
-.sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
-
-/* === 主内容区 === */
-.main { margin-left: 220px; flex: 1; min-height: 100vh; }
-.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
-.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.header .badge { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
-.header .breadcrumb { font-size: 12px; color: #94a3b8; }
-.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
-.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
-.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
-.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
-.container { padding: 24px 32px; }
-
-/* === 卡片 (阿里云风格 — 大圆角 + 细腻阴影) === */
-.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
-.card-body { padding: 24px; }
-.card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
-.state-block { display:inline-block;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;cursor:default;position:relative }
-.state-block.standby { background:#dbeafe;color:#1d4ed8 }
-.state-block.working { background:#dcfce7;color:#166534 }
-.state-block.fault { background:#fee2e2;color:#991b1b }
-.state-block.maintenance { background:#fef3c7;color:#92400e }
-.state-block.offline { background:#f1f5f9;color:#64748b }
-.model-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700 }
-.model-badge.A { background:#dcfce7;color:#166534 }
-.model-badge.B { background:#dbeafe;color:#1d4ed8 }
-.model-badge.C { background:#fef9c3;color:#854d0e }
-.model-badge.D { background:#fee2e2;color:#991b1b }
-.phase-bar { display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px;gap:1px }
-.phase-seg { height:100% }
-.phase-seg.approach { background:#94a3b8 }
-.phase-seg.initial_drill { background:#60a5fa }
-.phase-seg.steady_drill { background:#3b82f6 }
-.phase-seg.breakthrough { background:#f59e0b }
-.phase-seg.retract { background:#10b981 }
-.phase-seg.mud_fill { background:#a78bfa }
-.phase-seg.pressure_hold { background:#8b5cf6 }
-.phase-seg.unknown { background:#e2e8f0 }
-.model-panel { background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden }
-.model-panel-header { padding:14px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;color:#0f172a }
-.rec-card { background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:12px 16px }
-.rec-card .rec-title { font-size:11px;color:#0369a1;margin-bottom:4px }
-.rec-card .rec-value { font-size:24px;font-weight:700;color:#0c4a6e }
-.rec-card .rec-unit { font-size:11px;color:#0369a1;font-weight:400 }
-.rec-card .rec-reason { font-size:10px;color:#64748b;margin-top:4px }
-.state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
-.card-header .dot-indicator { width: 8px; height: 8px; border-radius: 50%; }
-.card-header .dot-indicator.blue { background: #1677ff; }
-.card-header .dot-indicator.green { background: #52c41a; }
-
-/* === 仪表盘卡片 (阿里云风格指标卡) === */
-.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
-.stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
-.stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
-.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
-.stat-card .stat-delta { font-size: 11px; margin-top: 6px; }
-.stat-card .stat-delta.up { color: #52c41a; }
-.stat-card .stat-delta.down { color: #ff4d4f; }
-.stat-card .stat-delta.warn { color: #faad14; }
-
-/* === 筛选栏 (阿里云风格) === */
-.filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-.filter-group { display: flex; flex-direction: column; gap: 5px; }
-.filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
-.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; min-width: 130px; }
-.filter-group input:hover, .filter-group select:hover { border-color: #cbd5e1; }
-.filter-group input:focus, .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-
-/* 按钮系列 (阿里云风格渐变) */
-.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
-.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
-.btn-primary:disabled { background: #b0c4de; box-shadow: none; cursor: not-allowed; transform: none; }
-.btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
-.btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
-.btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
-.btn-warning { background: linear-gradient(135deg, #faad14, #d48806); color: #fff; box-shadow: 0 2px 6px rgba(250,173,20,0.2); }
-.btn-warning:hover { background: linear-gradient(135deg, #ffc53d, #faad14); box-shadow: 0 4px 12px rgba(250,173,20,0.3); transform: translateY(-1px); }
-.btn-sm { padding: 5px 14px; font-size: 11px; }
-.quick-btn { padding: 4px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; transition: all 0.2s; color: #64748b; font-weight: 500; }
-.quick-btn:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
-.quick-btn.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; border-color: transparent; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
-
-/* === 状态栏 === */
-.status-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: #fafbfc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; }
-.status-bar .stat-value { font-weight: 600; color: #1677ff; }
-
-/* === 数据表格 === */
-#dataTable { width: 100%; font-size: 12px; }
-#dataTable th { background: #f8fafc; font-weight: 600; white-space: nowrap; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.3px; padding: 10px 12px; }
-#dataTable td { white-space: nowrap; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
-.dataTables_wrapper { font-size: 12px; }
-.dataTables_wrapper .dataTables_filter input { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 12px; font-size: 12px; outline: none; }
-.dataTables_wrapper .dataTables_filter input:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-
-/* === 告警/提示 (阿里云风格) === */
-.alert { padding: 12px 20px; border-radius: 12px; margin-bottom: 16px; display: none; font-size: 13px; }
-.alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
-.alert-warning { background: #fffbeb; border: 1px solid #fde68a; color: #d97706; }
-.alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
-
-/* === 加载遮罩 === */
-.loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
-.loading-overlay.show { display: flex; }
-.loading-box { background: #fff; padding: 32px 48px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
-.spinner { width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s cubic-bezier(0.4,0,0.2,1) infinite; margin: 0 auto 16px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-.spinner.done { border: none; width: 40px; height: 40px; animation: none; }
-.spinner.done::after { content: '\2714'; font-size: 28px; color: #10b981; line-height: 40px; }
-
-/* === 分析面板 (阿里云风格标签) === */
-.analysis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
-.analysis-card { border: 1px solid #f1f5f9; border-radius: 12px; padding: 20px; background: #fafbfc; transition: box-shadow 0.2s; }
-.analysis-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-.analysis-card h4 { font-size: 13px; margin-bottom: 10px; color: #0f172a; font-weight: 600; }
-.analysis-card .param-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.analysis-card .param-tag { padding: 3px 10px; background: #eff6ff; color: #2563eb; border-radius: 20px; font-size: 11px; font-weight: 500; border: none; }
-.analysis-card .param-tag.control { background: #fff7ed; color: #c2410c; }
-.analysis-card .param-tag.position { background: #ecfdf5; color: #059669; }
-.analysis-card .param-tag.pressure { background: #eff6ff; color: #2563eb; }
-.analysis-card .param-tag.timing { background: #f5f3ff; color: #7c3aed; }
-
-/* === 响应式 */
-.user-area { display: flex; align-items: center; gap: 10px; }
-.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
-.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
-/* 响应式 */
-@media (max-width: 768px) {
-    .sidebar { width: 60px; min-width: 60px; }
-    .sidebar .nav-item span { display: none; }
-    .sidebar .nav-section-title { display: none; }
-    .sidebar .count { display: none; }
-    .main { margin-left: 60px; }
-    .filter-bar { flex-direction: column; }
-}
-</style>
-</head>
-<body>
-
-<!-- === 左侧导航 === -->
-<div class="sidebar">
-    <div class="sidebar-header">
-        <h2>DCS 分析平台</h2>
-        <div class="version">开口机 · 堵口机</div>
-    </div>
-
-    <div class="nav-section">
-        <div class="nav-section-title">设备分组</div>
-        <div class="nav-item active" data-group="east_opener" onclick="switchGroup('east_opener')">
-            东开口机 <span class="count">19</span>
-        </div>
-        <div class="nav-item" data-group="west_opener" onclick="switchGroup('west_opener')">
-            西开口机 <span class="count">19</span>
-        </div>
-        <div class="nav-item" data-group="east_plugger" onclick="switchGroup('east_plugger')">
-            东堵口机 <span class="count">18</span>
-        </div>
-        <div class="nav-item" data-group="west_plugger" onclick="switchGroup('west_plugger')">
-            西堵口机 <span class="count">18</span>
-        </div>
-    </div>
-
-    <div class="nav-section">
-        <div class="nav-section-title">全部</div>
-        <div class="nav-item" data-group="all" onclick="switchGroup('all')">
-            全部设备 <span class="count">74</span>
-        </div>
-    </div>
-
-    <div class="sidebar-footer">
-        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span><a style="margin-left:auto;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.45);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a>
-    </div>
-</div>
-
-<!-- === 主内容 === -->
-<div class="main">
-
-    <div class="header">
-        <h1 id="pageTitle">东开口机</h1>
-        <span class="badge">InfluxDB</span>
-        <span class="breadcrumb" id="pageDesc">37个信号参数 · 7大类别</span>
-        
-        <div class="nav-links">
-            <a href="/" class="active">历史查询</a>
-            <a href="/realtime">实时监控</a>
-            <a href="/trend">趋势分析</a>
-            <a href="/analysis">作业分析</a>
-        </div>
-    </div>
-
-    <div class="container">
-
-        <!-- 统计概览 -->
-        <div class="stats-row" id="statsRow">
-            <div class="stat-card">
-                <div class="stat-label">信号参数</div>
-                <div class="stat-value" id="statParams">37</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">数据点数</div>
-                <div class="stat-value" id="statRows">--</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">时间跨度</div>
-                <div class="stat-value" id="statSpan">--</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">查询耗时</div>
-                <div class="stat-value" id="statTime">--</div>
-            </div>
-        </div>
-
-        <!-- 分析面板 -->
-        <div class="card" id="analysisCard">
-            <div class="card-header"><span class="dot-indicator blue"></span>参数分类与数据分析维度</div>
-            <div class="card-body">
-                <div class="analysis-grid" id="analysisGrid"></div>
-            </div>
-        </div>
-
-        <!-- 按日批量导出 -->
-        <div class="card">
-            <div class="card-header"><span class="dot-indicator green"></span> 按日批量导出</div>
-            <div class="card-body">
-                <div class="filter-bar">
-                    <div class="filter-group">
-                        <label>选择日期</label>
-                        <input type="date" id="dailyExportDate" style="min-width:150px;">
-                    </div>
-                    <div class="filter-group">
-                        <label>设备分组</label>
-                        <select id="dailyExportGroup" style="min-width:150px;">
-                            <option value="east_opener">东开口机 (19)</option>
-                            <option value="west_opener">西开口机 (19)</option>
-                            <option value="east_plugger">东堵口机 (18)</option>
-                            <option value="west_plugger">西堵口机 (18)</option>
-                            <option value="all">全部设备 (74)</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" style="flex-direction:row;align-items:center;">
-                        <button class="btn btn-success" id="dailyExportBtn" onclick="doDailyExport()">按日导出</button>
-                        <span id="dailyExportStatus" style="display:none;color:#f59e0b;font-size:12px;margin-left:8px;animation:pulse 1.2s infinite;">⏳ 导出中...</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 查询筛选 -->
-        <div class="card">
-            <div class="card-body">
-                <div style="display:flex;gap:8px;margin-bottom:12px;">
-                    <button class="quick-btn active" onclick="setQuickRange('1hour')">最近1小时</button>
-                    <button class="quick-btn" onclick="setQuickRange('3hours')">最近3小时</button>
-                    <button class="quick-btn" onclick="setQuickRange('6hours')">最近6小时</button>
-                    <button class="quick-btn" onclick="setQuickRange('12hours')">最近12小时</button>
-                    <button class="quick-btn" onclick="setQuickRange('24hours')">最近24小时</button>
-                </div>
-                <div class="filter-bar">
-                    <div class="filter-group">
-                        <label>开始时间</label>
-                        <input type="datetime-local" id="startTime">
-                    </div>
-                    <div class="filter-group">
-                        <label>结束时间</label>
-                        <input type="datetime-local" id="endTime">
-                    </div>
-                    <div class="filter-group">
-                        <label>每页行数</label>
-                        <select id="pageSize">
-                            <option value="50">50</option>
-                            <option value="100" selected>100</option>
-                            <option value="200">200</option>
-                            <option value="500">500</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>&nbsp;</label>
-                        <button class="btn btn-primary" onclick="doQuery()" id="queryBtn">查询</button>
-                    </div>
-                    <div class="filter-group">
-                        <label>&nbsp;</label>
-                        <button class="btn btn-success" onclick="doExport()" id="exportBtn" disabled>导出 Excel</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="alert alert-error" id="alertError"></div>
-        <div class="alert alert-warning" id="alertWarning"></div>
-
-        <!-- 数据表格 -->
-        <div class="card">
-            <div class="card-body" style="min-height:200px;">
-                <table id="dataTable" class="display compact" style="width:100%">
-                    <thead><tr><th>时间</th><th>参数名</th><th>中文名称</th><th>数值</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div class="status-bar">
-                <span>显示 <span class="stat-value" id="shownRows">0</span> 行 | 共 <span class="stat-value" id="totalRows">0</span> 个数据点</span>
-                <span>10.56.128.202:8086 / islag / DCS</span>
-            </div>
-        </div>
-
-    </div>
-</div>
-
-<div class="loading-overlay" id="loading">
-    <div class="loading-box">
-        <div class="spinner" id="loadingSpinner"></div>
-        <div style="color:#666;font-size:14px;" id="loadingTitle">正在查询 InfluxDB...</div>
-        <div style="color:#999;font-size:12px;margin-top:4px;" id="loadingSub">可能会需要几秒钟</div>
-    </div>
-</div>
-
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
-<script>
-// === 登录检查 ===
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
-function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
-
-// === 初始化 ===
-const GROUPS = {{ groups_json | safe }};
-const LABELS = {{ labels_json | safe }};
-const API_TOKEN = "{{ app_token }}";
-checkLogin();
-let currentGroup = 'east_opener';
-let currentData = [];
-let table = null;
-
-// 日期初始化 - 默认当天0点 ~ 当前时刻
-const now = new Date();
-const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-const pad2 = n => String(n).padStart(2,'0');
-const fmtLocal = d => d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
-document.getElementById('endTime').value = fmtLocal(now);
-document.getElementById('startTime').value = fmtLocal(todayStart);
-
-// 初始化分析面板和统计
-updateAnalysisPanel();
-updateStats();
-
-// === 导航切换 ===
-function switchGroup(groupId) {
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    document.querySelector(`[data-group="${groupId}"]`).classList.add('active');
-    currentGroup = groupId;
-
-    if (groupId === 'all') {
-        document.getElementById('pageTitle').textContent = '全部设备';
-        document.getElementById('pageDesc').textContent = '74个信号参数 · 东/西开口机 + 东/西堵口机';
-    } else {
-        const g = GROUPS.find(g => g.id === groupId);
-        if (g) {
-            document.getElementById('pageTitle').textContent = g.name;
-            document.getElementById('pageDesc').textContent = `${g.params.length}个信号参数 · ${Object.keys(g.categories).length}大类别`;
-        }
-    }
-    updateAnalysisPanel();
-    updateStats();
-}
-
-function updateStats() {
-    if (currentGroup === 'all') {
-        const total = GROUPS.reduce((s, g) => s + g.params.length, 0);
-        document.getElementById('statParams').textContent = total;
-    } else {
-        const g = GROUPS.find(g => g.id === currentGroup);
-        document.getElementById('statParams').textContent = g ? g.params.length : '--';
-    }
-}
-
-function updateAnalysisPanel() {
-    const grid = document.getElementById('analysisGrid');
-    const catNames = {
-        remote_command: '遥控器指令', control_valve: '控制比例阀',
-        position: '位置状态', pressure: '压力状态',
-        control: '控制指令', safety: '安全状态', hydraulic: '液压参数'
-    };
-    const catColors = {
-        remote_command: 'param-tag', control_valve: 'param-tag',
-        position: 'param-tag position', pressure: 'param-tag pressure',
-        control: 'param-tag control', safety: 'param-tag', hydraulic: 'param-tag'
-    };
-
-    let html = '';
-    if (currentGroup === 'all') {
-        GROUPS.forEach(g => {
-            html += `<div class="analysis-card"><h4>${g.name}</h4><div class="param-list">`;
-            Object.entries(g.categories).forEach(([cat, params]) => {
-                params.forEach(p => {
-                    html += `<span class="${catColors[cat] || 'param-tag'}">${LABELS[p] || p}</span>`;
-                });
-            });
-            html += '</div></div>';
-        });
-    } else {
-        const g = GROUPS.find(g => g.id === currentGroup);
-        if (g) {
-            Object.entries(g.categories).forEach(([cat, params]) => {
-                html += `<div class="analysis-card"><h4>${catNames[cat] || cat}</h4><div class="param-list">`;
-                params.forEach(p => {
-                    html += `<span class="${catColors[cat] || 'param-tag'}">${LABELS[p] || p}</span>`;
-                });
-                html += '</div></div>';
-            });
-        }
-    }
-    grid.innerHTML = html;
-}
-
-// === 快捷时间 ===
-function setQuickRange(range) {
-    document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
-    const end = new Date();
-    let hours;
-    switch(range) {
-        case '1hour': hours = 1; break;
-        case '3hours': hours = 3; break;
-        case '6hours': hours = 6; break;
-        case '12hours': hours = 12; break;
-        case '24hours': hours = 24; break;
-        default: hours = 1;
-    }
-    const start = new Date(end - hours * 3600000);
-    document.getElementById('endTime').value = fmtLocal(end);
-    document.getElementById('startTime').value = fmtLocal(start);
-}
-
-// === 查询 ===
-function showLoading() { document.getElementById('loading').classList.add('show'); document.getElementById('queryBtn').disabled = true; }
-function hideLoading() { document.getElementById('loading').classList.remove('show'); document.getElementById('queryBtn').disabled = false; }
-function hideAlerts() { ['alertError','alertWarning'].forEach(id => document.getElementById(id).style.display = 'none'); }
-
-function doQuery() {
-    const startTime = document.getElementById('startTime').value;
-    const endTime = document.getElementById('endTime').value;
-    if (!startTime || !endTime) { return; }
-
-    showLoading();
-    hideAlerts();
-
-    const t0 = performance.now();
-    $.getJSON('/api/query', {
-        start: startTime, stop: endTime,
-        group: currentGroup === 'all' ? '' : currentGroup,
-        token: API_TOKEN
-    })
-    .done(function(data) {
-        const t1 = performance.now();
-        if (data.error) {
-            document.getElementById('alertError').textContent = data.error;
-            document.getElementById('alertError').style.display = 'block';
-            hideLoading();
-            return;
-        }
-
-        currentData = data.rows || [];
-        document.getElementById('statRows').textContent = currentData.length.toLocaleString();
-        document.getElementById('statTime').textContent = ((t1-t0)/1000).toFixed(1) + 's';
-        document.getElementById('totalRows').textContent = currentData.length.toLocaleString();
-
-        // 时间跨度 — _time 是 UTC ISO 字符串，转为本地北京时间显示
-        if (currentData.length > 0) {
-            const times = currentData.map(r => r._time).filter(Boolean).sort();
-            const fmtIsoLocal = (isoStr) => {
-                const d = new Date(isoStr);
-                return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
-            };
-            document.getElementById('statSpan').textContent =
-                fmtIsoLocal(times[0]) + ' → ' + fmtIsoLocal(times[times.length-1]);
-        } else {
-            document.getElementById('statSpan').textContent = '无数据';
-        }
-
-        if (data.truncated) {
-            document.getElementById('alertWarning').textContent = data.hint;
-            document.getElementById('alertWarning').style.display = 'block';
-        }
-
-        if (table) table.destroy();
-        table = $('#dataTable').DataTable({
-            data: currentData,
-            columns: [
-                { data: '_time', title: '时间', width: '160px',
-                    render: v => v ? v.replace('T',' ').substring(0,19) : '' },
-                { data: 'param', title: '参数名', width: '130px' },
-                { data: 'label', title: '中文名称', width: '200px',
-                    render: v => v || '<span style="color:#ccc">--</span>' },
-                { data: 'value', title: '数值', width: '100px',
-                    render: function(v) {
-                        if (v === null || v === undefined || v === '') return '<span style="color:#ccc">--</span>';
-                        const n = Number(v);
-                        if (isNaN(n)) return v;
-                        if (n === 0) return '<span style="color:#999">0.0000</span>';
-                        return n.toFixed(4);
-                    }
-                }
-            ],
-            order: [[0, 'asc']],
-            pageLength: parseInt(document.getElementById('pageSize').value),
-            lengthMenu: [[25,50,100,200,500], [25,50,100,200,500]],
-            language: {
-                search: '搜索:',
-                lengthMenu: '每页 _MENU_ 条',
-                info: '显示 _START_ 到 _END_，共 _TOTAL_ 条',
-                infoEmpty: '无数据',
-                zeroRecords: '没有找到匹配的数据',
-                paginate: { first: '首页', last: '末页', next: '下一页', previous: '上一页' }
-            }
-        });
-
-        document.getElementById('exportBtn').disabled = currentData.length === 0;
-        hideLoading();
-    })
-    .fail(function(xhr, status, err) {
-        document.getElementById('alertError').textContent = '查询失败: ' + err;
-        document.getElementById('alertError').style.display = 'block';
-        hideLoading();
-    });
-}
-
-// === 导出（window.open 新标签下载 + 弹窗进度） ===
-var _exporting = false;
-
-function _showExportLoading() {
-    // 修改 loading 弹窗文案为导出相关
-    document.getElementById('loadingTitle').textContent = '正在导出...';
-    document.getElementById('loadingSub').textContent = '数据量越大，等待时间越长';
-    document.getElementById('loading').classList.add('show');
-    document.getElementById('exportBtn').disabled = true;
-}
-
-function _showExportDone(callback) {
-    // 导出完成：spinner 变绿勾 + 文案改为完成
-    document.getElementById('loadingSpinner').classList.add('done');
-    document.getElementById('loadingTitle').textContent = '导出完成';
-    document.getElementById('loadingSub').textContent = '文件正在下载中';
-    // 1.5s 后关闭弹窗并恢复
-    setTimeout(function() {
-        document.getElementById('loadingSpinner').classList.remove('done');
-        document.getElementById('loadingTitle').textContent = '正在查询 InfluxDB...';
-        document.getElementById('loadingSub').textContent = '可能会需要几秒钟';
-        document.getElementById('loading').classList.remove('show');
-        _exporting = false;
-        if (currentData.length > 0) document.getElementById('exportBtn').disabled = false;
-        if (callback) callback();
-    }, 1500);
-}
-
-function doExport() {
-    if (_exporting) {
-        alert('导出正在进行中，请等待完成后再试。');
-        return;
-    }
-    const startTime = document.getElementById('startTime').value;
-    const endTime = document.getElementById('endTime').value;
-    if (!startTime || !endTime) return;
-
-    _exporting = true;
-    _showExportLoading();
-
-    let url = '/api/export?start=' + encodeURIComponent(startTime) + '&stop=' + encodeURIComponent(endTime) + '&token=' + API_TOKEN;
-    if (currentGroup !== 'all') url += '&group=' + currentGroup;
-
-    // fetch+blob 确保文件完整下载后再弹出保存
-    fetch(url)
-        .then(resp => {
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            return resp.blob();
-        })
-        .then(blob => {
-            var a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = '';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
-            _showExportDone();
-        })
-        .catch(e => {
-            _exporting = false;
-            document.getElementById('loading').classList.remove('show');
-            alert('导出失败: ' + e.message);
-        });
-}
-
-// === 按日导出（window.open 新标签下载 + 进度提示） ===
-var _dailyExporting = false;
-
-function doDailyExport() {
-    if (_dailyExporting) {
-        alert('按日导出正在进行中，请稍候...');
-        return;
-    }
-    if (_exporting) {
-        if (!confirm('普通导出正在进行中，确定要开始按日导出吗？')) return;
-    }
-    var date = document.getElementById('dailyExportDate').value;
-    var group = document.getElementById('dailyExportGroup').value;
-    if (!date) { alert('请选择日期'); return; }
-
-    _dailyExporting = true;
-    var btn = document.getElementById('dailyExportBtn');
-    var status = document.getElementById('dailyExportStatus');
-    btn.disabled = true;
-    status.style.display = 'inline';
-    status.textContent = '\u23F3 导出中...';
-
-    // 弹窗遮罩显示进度
-    document.getElementById('loadingTitle').textContent = '正在按日导出...';
-    document.getElementById('loadingSub').textContent = '全天数据量较大，请耐心等待';
-    document.getElementById('loading').classList.add('show');
-
-    var url = '/api/export_daily?date=' + date + '&group=' + group + '&token=' + API_TOKEN;
-    fetch(url)
-        .then(resp => {
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            return resp.blob();
-        })
-        .then(blob => {
-            var a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = '';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
-            // 完成状态
-            document.getElementById('loadingSpinner').classList.add('done');
-            document.getElementById('loadingTitle').textContent = '导出完成';
-            document.getElementById('loadingSub').textContent = '文件正在下载中';
-            setTimeout(function() {
-                document.getElementById('loadingSpinner').classList.remove('done');
-                document.getElementById('loadingTitle').textContent = '正在查询 InfluxDB...';
-                document.getElementById('loadingSub').textContent = '可能会需要几秒钟';
-                document.getElementById('loading').classList.remove('show');
-                _dailyExporting = false;
-                btn.disabled = false;
-                status.style.display = 'none';
-            }, 1500);
-        })
-        .catch(e => {
-            _dailyExporting = false;
-            btn.disabled = false;
-            status.style.display = 'none';
-            document.getElementById('loading').classList.remove('show');
-            alert('按日导出失败: ' + e.message);
-        });
-}
-
-// 回车键查询
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && document.activeElement.tagName !== 'BUTTON') { doQuery(); }
-});
-
-// 初始化
-switchGroup('east_opener');
-document.getElementById('dailyExportDate').valueAsDate = new Date();
-</script>
-</body>
-</html>"""
+INDEX_HTML = _load_html_template("index.html") or ""
 
 
 # ==============================================================
@@ -950,8 +368,8 @@ def get_client():
                 if _influx_client is not None:
                     try:
                         _influx_client.close()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("关闭旧 InfluxDB 客户端失败: %s", e)
                 _influx_client = InfluxDBClient(
                     url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG,
                     timeout=INFLUX_TIMEOUT_MS
@@ -1021,76 +439,43 @@ def login_required(f):
     wrapper.__name__ = f.__name__
     return wrapper
 
-# === 登录页面 ===
-LOGIN_HTML = r"""<!DOCTYPE html>
+# === 登录页面 (内嵌，避免 PyInstaller 文件加载缓存问题) ===
+LOGIN_INLINE = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DCS 数据分析平台</title>
+<title>炉前开堵口数据分析平台</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;display:flex;align-items:center;justify-content:center}
 .login-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.15);padding:40px;width:380px;max-width:95vw}
 .login-box h2{font-size:22px;color:#1f2937;margin-bottom:6px}
 .login-box .sub{font-size:12px;color:#94a3b8;margin-bottom:24px}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:4px}
 .form-group input{width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;transition:border .2s}
-.form-group input:focus{border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,0.1)}
-.btn-login{width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#667eea,#764ba2);margin-top:8px;transition:opacity .2s}
+.form-group input:focus{border-color:#667eea}
+.btn-login{width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#667eea,#764ba2);margin-top:8px}
 .btn-login:hover{opacity:.9}
 .msg{text-align:center;font-size:12px;margin-top:12px;min-height:20px}
 .msg.err{color:#ef4444}
 .actions{text-align:center;margin-top:16px}
 .actions a{font-size:12px;color:#94a3b8;cursor:pointer;text-decoration:none}
 .actions a:hover{color:#667eea}
-/* 设置弹窗 */
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center}
-.modal-overlay.show{display:flex}
-.modal{background:#fff;border-radius:12px;padding:28px;width:420px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2)}
-.modal h3{font-size:16px;color:#1f2937;margin-bottom:16px}
-.modal .form-group input{font-size:13px;padding:8px 12px}
-.modal .btn-row{display:flex;gap:8px;margin-top:16px}
-.modal .btn-save{flex:1;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#667eea,#764ba2)}
-.modal .btn-cancel{flex:1;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#64748b;background:#fff}
-.modal .msg{text-align:left}
 </style>
 </head>
 <body>
 <div class="login-box">
-<h2>DCS 数据分析平台</h2>
+<h2>炉前开堵口数据分析平台</h2>
 <div class="sub">高炉炉前开口机/堵口机专用</div>
 <form onsubmit="doLogin(event)">
 <div class="form-group"><label>账号</label><input id="username" value="admin" placeholder="admin"></div>
-<div class="form-group"><label>密码</label><input id="password" type="password" value="admin123" placeholder="admin123"></div>
+<div class="form-group"><label>密码</label><input id="password" type="password" placeholder="请输入密码"></div>
 <button type="submit" class="btn-login">登 录</button>
 </form>
 <div class="msg" id="msg"></div>
-<div class="actions"><a onclick="openSettings()">⚙ 系统设置</a></div>
 </div>
-
-<!-- 设置弹窗 -->
-<div class="modal-overlay" id="settingsModal">
-<div class="modal">
-<h3>⚙ 系统设置</h3>
-<div class="form-group"><label>设置密码 (保护配置)</label><input id="settingsPwdCheck" type="password" placeholder="请输入设置密码" onchange="loadSettings()"></div>
-<hr style="border:none;border-top:1px solid #f1f5f9;margin:12px 0">
-<div class="form-group"><label>InfluxDB 地址</label><input id="influxUrl" placeholder="http://10.56.128.202:8086"></div>
-<div class="form-group"><label>InfluxDB Token</label><input id="influxToken" type="password" placeholder="输入 Token"></div>
-<div class="form-group"><label>组织 (Org)</label><input id="influxOrg" placeholder="myOrg"></div>
-<div class="form-group"><label>Bucket</label><input id="influxBucket" placeholder="islag"></div>
-<div class="form-group"><label>查询超时 (毫秒)</label><input id="influxTimeout" type="number" placeholder="180000"></div>
-<div class="form-group"><label>Web 访问 Token</label><input id="appToken" placeholder="dcs2026"></div>
-<div class="form-group"><label>新设置密码 (留空保持)</label><input id="settingsPwd" type="password" placeholder="留空保持不变"></div>
-<div class="btn-row">
-<button class="btn-save" onclick="saveSettings()">保存配置</button>
-<button class="btn-cancel" onclick="closeSettings()">取消</button>
-</div>
-<div class="msg" id="sMsg"></div>
-</div>
-</div>
-
 <script>
 async function doLogin(e){
     e.preventDefault();
@@ -1098,61 +483,22 @@ async function doLogin(e){
     var p=document.getElementById('password').value.trim();
     var r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
     var d=await r.json();
-    if(d.ok){window.location.href=d.redirect||'/trend'}
-    else{document.getElementById('msg').innerHTML=d.error;document.getElementById('msg').className='msg err'}
-}
-function openSettings(){
-    document.getElementById('settingsModal').classList.add('show');
-    document.getElementById('settingsPwdCheck').value='';
-    // 禁用输入（密码未验证）
-    ['influxUrl','influxToken','influxOrg','influxBucket','influxTimeout','appToken','settingsPwd'].forEach(id=>document.getElementById(id).disabled=true);
-    document.getElementById('sMsg').innerHTML='';
-    document.getElementById('sMsg').className='msg';
-}
-function closeSettings(){document.getElementById('settingsModal').classList.remove('show')}
-async function loadSettings(){
-    var pwd=document.getElementById('settingsPwdCheck').value;
-    if(!pwd)return;
-    var r=await fetch('/api/settings/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
-    var d=await r.json();
-    if(!d.ok){document.getElementById('sMsg').innerHTML='<span class="err">密码错误</span>';return}
-    // 解锁输入
-    ['influxUrl','influxToken','influxOrg','influxBucket','influxTimeout','appToken','settingsPwd'].forEach(id=>document.getElementById(id).disabled=false);
-    // 加载现有配置
-    var cr=await fetch('/api/settings/config?token='+(d.token||''));
-    var cfg=await cr.json();
-    document.getElementById('influxUrl').value=cfg.INFLUX_URL||'';
-    document.getElementById('influxOrg').value=cfg.INFLUX_ORG||'';
-    document.getElementById('influxBucket').value=cfg.INFLUX_BUCKET||'';
-    document.getElementById('influxTimeout').value=cfg.INFLUX_TIMEOUT_MS||'';
-    document.getElementById('appToken').value=cfg.APP_TOKEN&&cfg.APP_TOKEN.includes('***')?'':(cfg.APP_TOKEN||'');
-    document.getElementById('settingsPwd').value='';
-    document.getElementById('sMsg').innerHTML='已加载当前配置';
-    document.getElementById('sMsg').className='msg ok';
-}
-async function saveSettings(){
-    var data={
-        INFLUX_URL:document.getElementById('influxUrl').value.trim(),
-        INFLUX_TOKEN:document.getElementById('influxToken').value.trim()||undefined,
-        INFLUX_ORG:document.getElementById('influxOrg').value.trim(),
-        INFLUX_BUCKET:document.getElementById('influxBucket').value.trim(),
-        INFLUX_TIMEOUT_MS:document.getElementById('influxTimeout').value.trim(),
-        APP_TOKEN:document.getElementById('appToken').value.trim(),
-        SETTINGS_PASSWORD:document.getElementById('settingsPwd').value.trim()||undefined
-    };
-    Object.keys(data).forEach(k=>{if(data[k]===undefined)delete data[k]});
-    var r=await fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    var d=await r.json();
-    document.getElementById('sMsg').innerHTML=d.ok?'<span style="color:#166534">保存成功</span>':'<span style="color:#ef4444">'+d.error+'</span>';
+    if(d.ok){setTimeout(function(){window.location.href='/?token=""" + (APP_TOKEN or "") + r"""'},300)}
+    else{console.log('LOGIN FAILED:',d);document.getElementById('msg').innerHTML=d.error;document.getElementById('msg').className='msg err'}
 }
 </script>
 </body>
 </html>"""
 
+LOGIN_HTML = LOGIN_INLINE  # 始终使用内嵌版，避免 PyInstaller 缓存旧文件
+
 @app.route("/")
 def index():
     if not session.get("logged_in"):
-        return render_template_string(LOGIN_HTML)
+        if request.args.get("token") == APP_TOKEN:
+            session["logged_in"] = True
+        else:
+            return render_template_string(LOGIN_HTML.replace("{{ app_token }}", APP_TOKEN or ""))
     html = INDEX_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
     html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
@@ -1161,9 +507,20 @@ def index():
 @app.route("/api/login", methods=["POST"])
 def api_login():
     data = request.get_json(silent=True) or {}
-    if data.get("username") == "admin" and data.get("password") == "admin123":
+    username = data.get("username", "")
+    password = data.get("password", "")
+    pwd_correct = password == SETTINGS_PASSWORD
+    user_correct = username == "admin"
+    if user_correct and pwd_correct:
+        logger.info("登录成功: user=%s", username)
         session["logged_in"] = True
-    return jsonify({"ok": True, "redirect": "/"})
+        return jsonify({"ok": True, "redirect": "/"})
+    # 登录失败 — 打印掩码后的调试信息
+    masked = password[:1] + "***" + password[-1:] if len(password) > 2 else "***"
+    logger.warning(
+        "登录失败: user=%s pwd=%s pwd_len=%d user_ok=%s pwd_ok=%s expected_pwd_len=%d",
+        username, masked, len(password), user_correct, pwd_correct, len(SETTINGS_PASSWORD)
+    )
     return jsonify({"ok": False, "error": "账号或密码错误"})
 
 
@@ -1414,8 +771,8 @@ def api_export_daily():
     except Exception as e:
         try:
             wb.close()
-        except Exception:
-            pass
+        except Exception as e2:
+            logger.warning("关闭 Excel workbook 失败: %s", e2)
         return f"导出失败: {str(e)[:200]}", 500
 
 
@@ -1617,1217 +974,10 @@ def api_realtime():
         return jsonify({"error": f"查询失败: {str(e)[:200]}"})
 
 
-REALTIME_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>实时数据监控 — DCS</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+REALTIME_HTML = _load_html_template("realtime.html") or ""
 
-/* === 左侧导航 (阿里云风格深色侧栏) === */
-.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
-.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
-.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
-.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
 
-/* 侧边栏搜索 */
-.sidebar-search { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.sidebar-search input { width: 100%; padding: 7px 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; font-size: 12px; background: rgba(255,255,255,0.06); color: #fff; outline: none; transition: all 0.2s; }
-.sidebar-search input::placeholder { color: rgba(255,255,255,0.3); }
-.sidebar-search input:focus { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.1); }
-
-/* 树形导航 */
-.tree { flex: 1; overflow-y: auto; padding: 6px 0; }
-.tree::-webkit-scrollbar { width: 4px; }
-.tree::-webkit-scrollbar-track { background: transparent; }
-.tree::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-
-.tree-section-title { padding: 6px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
-
-/* 全部设备 */
-.tree-item-all { display: flex; align-items: center; gap: 10px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); }
-.tree-item-all:hover { background: rgba(255,255,255,0.05); color: #fff; }
-.tree-item-all.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
-
-/* 设备分组标题 */
-.tree-group-title { display: flex; align-items: center; gap: 8px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); user-select: none; }
-.tree-group-title:hover { background: rgba(255,255,255,0.05); color: #fff; }
-.tree-group-title.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
-.tree-group-title .arrow { font-size: 10px; transition: transform 0.2s; display: inline-block; width: 10px; flex-shrink: 0; }
-.tree-group-title .arrow.open { transform: rotate(90deg); }
-.tree-group-title .badge { margin-left: auto; background: rgba(255,255,255,0.1); font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
-
-/* 分类/参数子项 */
-.tree-items { display: none; }
-.tree-items.show { display: block; }
-.tree-cat { padding: 6px 16px 6px 36px; font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent; font-weight: 500; }
-.tree-cat:hover { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.8); }
-.tree-cat.active { color: #91caff; border-left-color: #91caff; background: rgba(22,119,255,0.08); }
-.tree-param { padding: 3px 16px 3px 52px; font-size: 11px; color: rgba(255,255,255,0.35); cursor: pointer; transition: all 0.15s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tree-param:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.03); }
-.tree-param.active { color: #91caff; background: rgba(22,119,255,0.06); }
-
-/* 侧边栏底部 */
-.sidebar-footer { padding: 10px 20px; font-size: 10px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* === 主内容区 === */
-.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
-.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
-.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
-.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
-.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
-.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
-
-/* 工具栏 (阿里云风格) */
-.toolbar { background: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; }
-.toolbar .toggle-label { font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; color: #1f2937; }
-.toolbar .toggle-switch { width: 40px; height: 22px; background: #e2e8f0; border-radius: 11px; position: relative; cursor: pointer; transition: all 0.3s; }
-.toolbar .toggle-switch.on { background: #52c41a; box-shadow: 0 0 4px rgba(82,196,26,0.3); }
-.toolbar .toggle-switch::after { content: ''; width: 18px; height: 18px; background: #fff; border-radius: 50%; position: absolute; top: 2px; left: 2px; transition: left 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
-.toolbar .toggle-switch.on::after { left: 20px; }
-.toolbar .refresh-select { padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; }
-.toolbar .refresh-select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-.toolbar .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #52c41a; display: inline-block; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
-.toolbar .status-text { font-size: 12px; color: #52c41a; font-weight: 500; }
-.toolbar .timestamp { font-size: 11px; color: #94a3b8; margin-left: auto; }
-
-/* 表格卡片 */
-.content { flex: 1; padding: 24px 32px; overflow-y: auto; }
-.table-wrap { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); overflow: hidden; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th { background: #f8fafc; padding: 12px 16px; text-align: left; font-weight: 600; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
-.data-table td { padding: 10px 16px; border-bottom: 1px solid #f8fafc; white-space: nowrap; }
-.data-table tbody tr { transition: background 0.15s; }
-.data-table tbody tr:hover { background: #f0f5ff; }
-.data-table tbody tr:nth-child(even) { background: #fafbfc; }
-.data-table tbody tr:nth-child(even):hover { background: #f0f5ff; }
-.data-table .col-index { width: 50px; text-align: center; color: #94a3b8; font-size: 12px; }
-.data-table .col-tag { width: 140px; font-family: "Consolas", monospace; font-size: 12px; color: #0f172a; }
-.data-table .col-label { width: 200px; color: #1f2937; }
-.data-table .col-value { width: 120px; font-weight: 600; font-size: 14px; }
-.data-table .col-time { width: 180px; color: #94a3b8; font-size: 12px; }
-.data-table .value-zero { color: #cbd5e1; }
-.data-table .value-normal { color: #0f172a; }
-.data-table .value-high { color: #dc2626; font-weight: 700; }
-.data-table .value-empty { color: #cbd5e1; font-style: italic; }
-.data-table tfoot td { background: #fafbfc; font-size: 12px; color: #94a3b8; padding: 10px 16px; }
-
-/* 按钮系列 (阿里云风格渐变) */
-.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
-.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
-
-/* 加载 */
-.loading-bar { height: 3px; background: #f1f5f9; overflow: hidden; }
-.loading-bar::after { content: ''; display: block; width: 40%; height: 100%; background: linear-gradient(90deg, #1677ff, #4096ff); animation: loading 1.5s ease-in-out infinite; border-radius: 2px; }
-@keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
-.loading-bar.hide { display: none; }
-
-/* === 响应式 */
-.user-area { display: flex; align-items: center; gap: 10px; }
-.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
-.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
-/* 响应式 */
-@media (max-width: 768px) {
-    .sidebar { width: 60px; min-width: 60px; }
-    .sidebar .sidebar-search { display: none; }
-    .sidebar .tree-item-all span:not(.tree-item-all-icon), .tree-group-title span:not(.arrow),
-    .tree-group-title .badge, .tree-cat, .tree-param, .sidebar-footer, .sidebar-header .version { display: none; }
-    .sidebar .tree-group-title { padding: 9px 8px; justify-content: center; }
-    .sidebar .tree-item-all { padding: 9px 8px; justify-content: center; }
-    .main { margin-left: 60px; }
-    .toolbar { flex-direction: column; align-items: flex-start; }
-}
-</style>
-</head>
-<body>
-
-<div class="sidebar">
-    <div class="sidebar-header">
-        <h2>DCS 分析平台</h2>
-        <div class="version">实时监控</div>
-    </div>
-
-    <div class="sidebar-search">
-        <input type="text" id="sidebarSearch" placeholder="搜索 TAG 或中文名..." onkeyup="filterTable()">
-    </div>
-
-    <div class="tree" id="treeNav"></div>
-
-    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 默认: 全部设备</div>
-</div>
-
-<div class="main">
-    <div class="header">
-        <h1>实时数据监控</h1>
-        
-        <div class="nav-links">
-            <a href="/">历史查询</a>
-            <a href="/realtime" class="active">实时监控</a>
-            <a href="/trend">趋势分析</a>
-            <a href="/analysis">作业分析</a>
-        </div>
-    </div>
-
-    <div class="toolbar">
-        <label class="toggle-label">
-            <span class="toggle-switch" id="toggleSwitch" onclick="toggleAutoRefresh()"></span>
-            <span>实时刷新</span>
-        </label>
-        <select class="refresh-select" id="refreshInterval" onchange="changeInterval()">
-            <option value="3">3 秒</option>
-            <option value="5" selected>5 秒</option>
-            <option value="10">10 秒</option>
-            <option value="30">30 秒</option>
-        </select>
-        <button class="btn btn-primary" onclick="fetchRealtime()">手动刷新</button>
-        <span class="status-dot" id="statusDot"></span>
-        <span class="status-text" id="statusText">在线</span>
-        <span class="timestamp" id="lastUpdate">--</span>
-    </div>
-
-    <div class="loading-bar" id="loadingBar"></div>
-
-    <div class="content">
-        <div class="table-wrap">
-            <table class="data-table" id="realtimeTable">
-                <thead>
-                    <tr>
-                        <th class="col-index">序号</th>
-                        <th class="col-tag">TAG名称</th>
-                        <th class="col-label">中文名称</th>
-                        <th class="col-value">最新值</th>
-                        <th class="col-time">更新时间</th>
-                    </tr>
-                </thead>
-                <tbody id="tableBody"></tbody>
-                <tfoot>
-                    <tr><td colspan="5" id="tableFooter">共 0 条记录</td></tr>
-                </tfoot>
-            </table>
-        </div>
-    </div>
-</div>
-
-<script>
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
-function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
-const GROUPS = {{ groups_json | safe }};
-const LABELS = {{ labels_json | safe }};
-const API_TOKEN = "{{ app_token }}";
-checkLogin();
-const CAT_NAMES = {
-    remote_command: '遥控器指令', control_valve: '控制比例阀',
-    position: '位置状态', pressure: '压力状态',
-    control: '控制指令', safety: '安全状态', hydraulic: '液压参数'
-};
-let currentFilter = { type: 'group', value: 'all' };
-let autoRefreshTimer = null;
-let autoRefreshOn = false;
-let latestRows = [];
-
-// === 构建树形导航 ===
-function buildTree() {
-    const tree = document.getElementById('treeNav');
-    let html = `
-    <div class="tree-section-title">设备分组</div>
-    <div class="tree-item-all active" data-filter="all" onclick="clickGroup('all', this)">
-        全部设备
-    </div>`;
-
-    GROUPS.forEach(g => {
-        html += `<div class="tree-group">
-            <div class="tree-group-title" data-filter="${g.id}" onclick="clickGroup('${g.id}', this)">
-                <span class="arrow">▶</span>
-                ${g.name}
-                <span class="badge">${g.params.length}</span>
-            </div>
-            <div class="tree-items" id="items_${g.id}"></div>
-        </div>`;
-    });
-    tree.innerHTML = html;
-
-    // 构建每个组的子项
-    GROUPS.forEach(g => {
-        const div = document.getElementById('items_' + g.id);
-        let subHtml = '';
-        Object.entries(g.categories).forEach(([cat, params]) => {
-            subHtml += `<div class="tree-cat" data-group="${g.id}" data-cat="${cat}" onclick="clickCategory('${g.id}', '${cat}', this)">
-                ${CAT_NAMES[cat] || cat} (${params.length})
-            </div>`;
-            params.forEach(p => {
-                subHtml += `<div class="tree-param" data-group="${g.id}" data-param="${p}" onclick="clickParam('${p}', this)">
-                    ${LABELS[p] || p}
-                </div>`;
-            });
-        });
-        div.innerHTML = subHtml;
-    });
-
-    expandGroup('east_opener');
-}
-
-function expandGroup(groupId) {
-    const items = document.getElementById('items_' + groupId);
-    const title = document.querySelector(`.tree-group-title[data-filter="${groupId}"]`);
-    if (items && title) {
-        items.classList.add('show');
-        title.querySelector('.arrow').classList.add('open');
-    }
-}
-
-function toggleGroup(groupId) {
-    const items = document.getElementById('items_' + groupId);
-    const title = document.querySelector(`.tree-group-title[data-filter="${groupId}"]`);
-    if (items && title) {
-        items.classList.toggle('show');
-        title.querySelector('.arrow').classList.toggle('open');
-    }
-}
-
-function clearActive() {
-    document.querySelectorAll('.tree-item-all, .tree-group-title, .tree-cat, .tree-param')
-        .forEach(e => e.classList.remove('active'));
-}
-
-function setFooter(text) {
-    document.getElementById('sidebarFooter').textContent = text;
-}
-
-// === 三种点击行为：分组 / 分类 / 参数 ===
-
-function clickGroup(groupId, el) {
-    clearActive();
-    el.classList.add('active');
-    currentFilter = { type: 'group', value: groupId };
-
-    const name = groupId === 'all' ? '全部设备' :
-        (GROUPS.find(g => g.id === groupId)?.name || groupId);
-    setFooter('当前: ' + name);
-
-    // 如果点击设备组标题，同时展开/收起
-    if (el.classList.contains('tree-group-title')) {
-        toggleGroup(groupId);
-    }
-
-    doFetch();
-}
-
-function clickCategory(groupId, cat, el) {
-    clearActive();
-    el.classList.add('active');
-    currentFilter = { type: 'category', group: groupId, cat: cat };
-    setFooter('当前: ' + (CAT_NAMES[cat] || cat));
-    doFetch();
-}
-
-function clickParam(param, el) {
-    clearActive();
-    el.classList.add('active');
-    currentFilter = { type: 'param', value: param };
-    setFooter('当前: ' + (LABELS[param] || param));
-    doFetch();
-}
-
-// === 数据获取（拒绝 jQuery，原生 fetch） ===
-
-function doFetch() {
-    // 停止自动刷新计时器（防止堆积）
-    if (autoRefreshOn) startAutoRefresh();
-
-    document.getElementById('loadingBar').classList.remove('hide');
-
-    let url = '/api/realtime?group=all&token=' + API_TOKEN;
-    if (currentFilter.type === 'group' && currentFilter.value !== 'all') {
-        url = '/api/realtime?group=' + currentFilter.value + '&token=' + API_TOKEN;
-    } else if (currentFilter.type === 'param') {
-        url = '/api/realtime?param=' + encodeURIComponent(currentFilter.value) + '&token=' + API_TOKEN;
-    } else if (currentFilter.type === 'category') {
-        url = '/api/realtime?group=' + currentFilter.group + '&token=' + API_TOKEN;
-    }
-
-    fetch(url)
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(data => {
-            document.getElementById('loadingBar').classList.add('hide');
-            if (data.error) {
-                document.getElementById('statusText').textContent = '错误: ' + data.error;
-                document.getElementById('statusDot').style.background = '#ff4d4f';
-                return;
-            }
-            document.getElementById('statusDot').style.background = '#52c41a';
-            document.getElementById('statusText').textContent = '在线';
-            const ts = data.timestamp ? data.timestamp.replace('T',' ').substring(0,19) : '';
-            document.getElementById('lastUpdate').textContent = '上次更新: ' + ts;
-
-            latestRows = data.rows || [];
-            renderTable(latestRows);
-        })
-        .catch(err => {
-            document.getElementById('loadingBar').classList.add('hide');
-            document.getElementById('statusDot').style.background = '#ff4d4f';
-            const msg = (err && err.message) || String(err);
-            document.getElementById('statusText').textContent = '错误: ' + msg;
-            console.error('fetch 错误:', err);
-        });
-}
-
-function fetchRealtime() {
-    doFetch();
-}
-
-function renderTable(rows) {
-    const tbody = document.getElementById('tableBody');
-    const searchVal = document.getElementById('sidebarSearch').value.toLowerCase().trim();
-
-    let filtered = rows;
-
-    // 分类筛选（如果 API 返回的是整个组的数据）
-    if (currentFilter.type === 'param') {
-        filtered = filtered.filter(r => r.param === currentFilter.value);
-    } else if (currentFilter.type === 'category') {
-        const g = GROUPS.find(x => x.id === currentFilter.group);
-        if (g && g.categories[currentFilter.cat]) {
-            const catParams = g.categories[currentFilter.cat];
-            filtered = filtered.filter(r => catParams.includes(r.param));
-        }
-    }
-
-    // 搜索文本筛选
-    if (searchVal) {
-        filtered = filtered.filter(r =>
-            r.param.toLowerCase().includes(searchVal) ||
-            (r.label || '').toLowerCase().includes(searchVal)
-        );
-    }
-
-    // 重新编号
-    filtered.forEach((r, i) => r.index = i + 1);
-
-    let html = '';
-    filtered.forEach(r => {
-        const t = r._time ? r._time.replace('T',' ').substring(0,19) : '--';
-        let valClass = 'value-normal';
-        let displayVal = r.value;
-        if (displayVal === '' || displayVal === null || displayVal === undefined) {
-            displayVal = '--';
-            valClass = 'value-empty';
-        } else if (typeof displayVal === 'number' && displayVal === 0) {
-            valClass = 'value-zero';
-            displayVal = '0.0000';
-        } else if (typeof displayVal === 'number') {
-            displayVal = Number(displayVal).toFixed(4);
-        }
-
-        html += `<tr>
-            <td class="col-index">${r.index}</td>
-            <td class="col-tag">${r.param}</td>
-            <td class="col-label">${r.label || r.param}</td>
-            <td class="col-value"><span class="${valClass}">${displayVal}</span></td>
-            <td class="col-time">${t}</td>
-        </tr>`;
-    });
-
-    tbody.innerHTML = html;
-    document.getElementById('tableFooter').textContent =
-        `共 ${filtered.length} 条记录（筛选后 ${filtered.length} / 总计 ${rows.length}）`;
-}
-
-function filterTable() {
-    if (latestRows.length > 0) renderTable(latestRows);
-}
-
-// === 自动刷新 ===
-function toggleAutoRefresh() {
-    const sw = document.getElementById('toggleSwitch');
-    autoRefreshOn = !autoRefreshOn;
-    if (autoRefreshOn) {
-        sw.classList.add('on');
-        startAutoRefresh();
-    } else {
-        sw.classList.remove('on');
-        stopAutoRefresh();
-    }
-}
-
-function startAutoRefresh() {
-    stopAutoRefresh();
-    const sec = parseInt(document.getElementById('refreshInterval').value) || 5;
-    autoRefreshTimer = setInterval(doFetch, sec * 1000);
-}
-
-function stopAutoRefresh() {
-    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
-}
-
-function changeInterval() {
-    if (autoRefreshOn) startAutoRefresh();
-}
-
-// === 初始化 ===
-buildTree();
-doFetch();
-</script>
-</body>
-</html>"""
-
-
-TREND_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<title>趋势分析 — DCS</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
-<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
-
-.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
-.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
-.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.sidebar-header h2 { font-size: 16px; font-weight: 700; }
-.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; }
-
-.tree { flex: 1; overflow-y: auto; padding: 6px 0; }
-.tree::-webkit-scrollbar { width: 4px; }
-.tree::-webkit-scrollbar-track { background: transparent; }
-.tree::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-
-.tree-section-title { padding: 6px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
-.tree-group-title { display: flex; align-items: center; gap: 8px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; color: rgba(255,255,255,0.65); user-select: none; }
-.tree-group-title:hover { background: rgba(255,255,255,0.05); color: #fff; }
-.tree-group-title .arrow { font-size: 10px; transition: transform 0.2s; display: inline-block; width: 10px; flex-shrink: 0; }
-.tree-group-title .arrow.open { transform: rotate(90deg); }
-.tree-items { display: none; }
-.tree-items.show { display: block; }
-.tree-param { padding: 6px 20px 6px 40px; font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tree-param:hover { color: #fff; background: rgba(255,255,255,0.04); }
-.tree-param.checked { color: #91caff; }
-.tree-param .check-box { width: 14px; height: 14px; border: 1.5px solid rgba(255,255,255,0.3); border-radius: 3px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; }
-.tree-param.checked .check-box { background: #1677ff; border-color: #1677ff; }
-.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
-
-/* 主内容 */
-.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
-.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
-.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
-.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
-.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
-.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
-
-/* 工具栏 */
-.toolbar { background: #fff; padding: 10px 24px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-.toolbar label { font-size: 11px; color: #64748b; font-weight: 600; }
-.toolbar input[type=datetime-local] { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; }
-.toolbar input[type=datetime-local]:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-/* 事件选择器与左侧参数树风格统一 */
-.event-select-wrap select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; min-width: 200px; height: 38px; }
-.event-select-wrap select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-.event-select-wrap .label { display: block; font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 2px; }
-.event-select-wrap .btn { height: 38px; padding: 0 16px; font-size: 13px; }
-.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; white-space: nowrap; }
-.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
-.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); }
-.btn-sm { padding: 4px 12px; font-size: 11px; border-radius: 6px; }
-.btn-outline { background: #fff; border: 1px solid #e2e8f0; color: #64748b; }
-.btn-outline:hover { border-color: #1677ff; color: #1677ff; }
-.btn-danger { background: #fff; border: 1px solid #fecaca; color: #dc2626; }
-.btn-danger:hover { background: #fef2f2; }
-
-/* 配置面板 */
-.config-panel { background: #fff; margin: 16px 24px 0; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); overflow: hidden; }
-.config-header { padding: 12px 20px; border-bottom: 1px solid #f1f5f9; font-size: 13px; font-weight: 600; color: #0f172a; display: flex; align-items: center; justify-content: space-between; }
-.config-body { padding: 12px 20px; max-height: 200px; overflow-y: auto; }
-.config-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 13px; }
-.config-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f8fafc; font-size: 12px; }
-.config-row:last-child { border-bottom: none; }
-.config-row .color-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-.config-row .param-name { width: 140px; font-weight: 500; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.config-row .param-label { width: 160px; color: #64748b; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.config-row select, .config-row input { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px; outline: none; }
-.config-row select:focus, .config-row input:focus { border-color: #1677ff; }
-.config-row input[type=number] { width: 72px; }
-.config-row .remove-btn { cursor: pointer; color: #94a3b8; font-size: 16px; padding: 0 4px; }
-.config-row .remove-btn:hover { color: #dc2626; }
-
-/* 图表区 */
-.chart-wrap { flex: 1; margin: 16px 24px 24px; background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); display: flex; flex-direction: column; min-height: 500px; position: relative; }
-.chart-area { flex: 1; position: relative; }
-.loading-overlay { display: none; position: absolute; inset: 0; background: rgba(255,255,255,0.7); justify-content: center; align-items: center; z-index: 10; }
-.loading-overlay.show { display: flex; }
-.spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-@media (max-width: 768px) {
-    .sidebar { width: 60px; min-width: 60px; }
-    .sidebar .tree-param, .sidebar .tree-section-title, .sidebar .sidebar-header .version { display: none; }
-    .main { margin-left: 60px; }
-    .config-panel { margin: 8px 12px 0; }
-    .chart-wrap { margin: 8px 12px 12px; }
-    .toolbar { flex-direction: column; align-items: flex-start; }
-}
-.user-area { display: flex; align-items: center; gap: 10px; }
-.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
-.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
-</style>
-</head>
-<body>
-
-<div class="sidebar">
-    <div class="sidebar-header">
-        <h2>DCS 分析平台</h2>
-        <div class="version">趋势分析</div>
-    </div>
-    <div class="tree-section-title">选择变量</div>
-    <div class="tree" id="treeNav"></div>
-    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 已选 0 个变量</div>
-</div>
-
-<div class="main">
-    <div class="header">
-        <h1>趋势分析</h1>
-        
-        <div class="nav-links">
-            <a href="/">历史查询</a>
-            <a href="/realtime">实时监控</a>
-            <a href="/trend" class="active">趋势分析</a>
-            <a href="/analysis">作业分析</a>
-        </div>
-    </div>
-
-    <div class="toolbar">
-        <div>
-            <label>开始时间</label><br>
-            <input type="datetime-local" id="startTime">
-        </div>
-        <div>
-            <label>结束时间</label><br>
-            <input type="datetime-local" id="endTime">
-        </div>
-        <button class="btn btn-primary" onclick="doQuery()">查询</button>
-        <div class="event-box event-select-wrap">
-            <span class="label">开口事件</span>
-            <div style="display:flex;gap:6px;align-items:center;">
-                <select id="eventSelect" onchange="onEventSelect()">
-                    <option value="">-- 选择开口事件 --</option>
-                </select>
-                <button class="btn btn-outline" onclick="fetchEvents()" title="检测开口事件">🔍</button>
-            </div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="clearAll()" style="margin-left:auto;">清空所有变量</button>
-    </div>
-
-    <div class="config-panel">
-        <div class="config-header">
-            <span>已选变量配置</span>
-            <span style="font-size:11px;color:#94a3b8;">Y轴范围留空 = 自动</span>
-        </div>
-        <div class="config-body" id="configBody">
-            <div class="config-empty">左侧勾选变量开始分析</div>
-        </div>
-    </div>
-
-    <div class="chart-wrap">
-        <div id="chartArea" class="chart-area"></div>
-    </div>
-</div>
-
-<script>
-function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
-function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
-const GROUPS = {{ groups_json | safe }};
-const LABELS = {{ labels_json | safe }};
-const API_TOKEN = "{{ app_token }}";
-checkLogin();
-const COLORS = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#2f54eb','#a0d911','#f5222d','#1890ff','#fa541c','#9254de','#597ef7'];
-let selectedParams = [];
-let uplot = null;
-
-// === 销毁图表 ===
-function destroyChart() {
-    if (uplot) { uplot.destroy(); uplot = null; }
-    const tip = document.getElementById('uplot-tooltip');
-    if (tip) tip.remove();
-    const legend = document.getElementById('chart-legend');
-    if (legend) legend.innerHTML = '';
-    const indicator = document.getElementById('zoomIndicator');
-    if (indicator) indicator.remove();
-}
-
-// === 数据转换: API格式 → uPlot列格式 ===
-//   应用每条曲线的 Y轴偏移量 (offset)，仅影响渲染位置不影响原始数据
-function buildUplotData(apiData) {
-    const first = apiData.series.find(s => s.data.length > 0);
-    if (!first) return null;
-    const timestamps = first.data.map(d => new Date(d.time).getTime() / 1000);
-    const cols = [timestamps];
-    apiData.series.forEach(s => {
-        const map = {};
-        s.data.forEach(d => { map[new Date(d.time).getTime() / 1000] = d.value; });
-        const cfg = selectedParams.find(x => x.param === s.param);
-        const off = (cfg && cfg.offset) ? cfg.offset : 0;
-        cols.push(timestamps.map(t => {
-            const v = map[t];
-            if (v === undefined) return null;
-            return v + off;  // 视觉上偏移，不影响 tooltip 显示
-        }));
-    });
-    return cols;
-}
-
-// 记录原始值 (未偏移) 供 tooltip 显示
-let _rawValues = [];
-
-// === 自定义 Tooltip 插件（固定页面右侧） ===
-function tooltipPlugin() {
-    let over;
-    const tip = document.createElement('div');
-    tip.id = 'uplot-tooltip';
-    tip.style.cssText = [
-        'display:none;position:fixed;z-index:100;pointer-events:none;',
-        'top:50%;right:24px;transform:translateY(-50%);',
-        'background:rgba(15,23,42,0.95);color:#f1f5f9;',
-        'padding:12px 16px;border-radius:8px;',
-        'font-size:12px;line-height:1.6;',
-        'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;',
-        'box-shadow:0 4px 16px rgba(0,0,0,0.2);',
-        'border:1px solid #334155;',
-        'min-width:220px;max-width:280px;'
-    ].join('');
-    return {
-        hooks: {
-            init: (u) => {
-                over = u.over;
-                tip.owner = u;  // 缓存 uPlot 实例引用
-                document.body.appendChild(tip);
-                over.addEventListener('mouseenter', () => { tip.style.display = 'block'; });
-                over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
-            },
-            setCursor: (u) => {
-                const { idx } = u.cursor;
-                if (idx == null) { tip.style.display = 'none'; return; }
-                tip.style.display = 'block';
-                const t = u.data[0][idx];
-                const d = new Date(t * 1000);
-                const pad = n => String(n).padStart(2, '0');
-                const timeStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
-                    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-                let html = '<div style="font-weight:700;margin-bottom:10px;color:#e2e8f0;font-size:12px;' +
-                    'border-bottom:1px solid #334155;padding-bottom:8px;">⏱ ' + timeStr + '</div>';
-                for (let i = 1; i < u.data.length; i++) {
-                    const vRaw = (_rawValues[i-1] && _rawValues[i-1][idx] !== undefined) ? _rawValues[i-1][idx] : null;
-                    const s = u.series[i];
-                    // 直接从 uPlot series 取颜色，不依赖 selectedParams (左侧勾选池)
-                    const clr = s._color || (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999'));
-                    // 数值统一跟随曲线颜色，更直观对应
-                    const valHtml = (vRaw == null)
-                        ? '<span style="color:#64748b;">--</span>'
-                        : '<span style="font-weight:700;color:' + clr + ';font-variant-numeric:tabular-nums;text-shadow:0 0 8px ' + clr + '66;">' + Number(vRaw).toFixed(2) + '</span>';
-                    html += '<div data-tip-row="' + (i-1) + '" style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px 4px 12px;' +
-                        'border-left:5px solid ' + clr + ';border-radius:0 6px 6px 0;' +
-                        'background:linear-gradient(90deg,' + clr + '22 0%,rgba(255,255,255,0.04) 100%);' +
-                        'white-space:nowrap;">' +
-                        '<span style="flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;color:#e2e8f0;font-size:11px;font-weight:600;">' +
-                        (s.label || '') + '</span>' +
-                        valHtml + '</div>';
-                }
-                tip.innerHTML = html;
-                // 缓存行引用供 toggleSeriesVis 同步
-                window._tipRows = tip.querySelectorAll('[data-tip-row]');
-            }
-        }
-    };
-}
-
-// === 初始化时间 ===
-function initTime() {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const pad = n => String(n).padStart(2,'0');
-    const fmt = d => d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
-    document.getElementById('endTime').value = fmt(now);
-    document.getElementById('startTime').value = fmt(todayStart);
-}
-
-// === 构建树 ===
-function buildTree() {
-    const tree = document.getElementById('treeNav');
-    let html = '';
-    GROUPS.forEach(g => {
-        html += `<div class="tree-group">
-            <div class="tree-group-title" onclick="toggleGroup('${g.id}')">
-                <span class="arrow">▶</span> ${g.name}
-            </div>
-            <div class="tree-items" id="items_${g.id}"></div>
-        </div>`;
-    });
-    tree.innerHTML = html;
-
-    GROUPS.forEach(g => {
-        const div = document.getElementById('items_' + g.id);
-        let sub = '';
-        const CAT_CN = {remote_command:'遥控指令', control_valve:'控制阀', position:'位置', pressure:'压力', control:'控制', safety:'安全', hydraulic:'液压', mud_quantity:'打泥量'};
-        Object.entries(g.categories).forEach(([cat, params]) => {
-            sub += '<div style="padding:4px 20px;font-size:10px;color:rgba(255,255,255,0.25);text-transform:uppercase;">' + (CAT_CN[cat] || cat) + '</div>';
-            params.forEach(p => {
-                sub += `<div class="tree-param" data-param="${p}" onclick="toggleParam('${p}', this)">
-                    <span class="check-box"></span> ${LABELS[p] || p}
-                </div>`;
-            });
-        });
-        div.innerHTML = sub;
-    });
-
-    // 默认展开第一个组
-    const first = document.getElementById('items_' + GROUPS[0].id);
-    if (first) {
-        first.classList.add('show');
-        first.parentElement.querySelector('.arrow').classList.add('open');
-    }
-}
-
-function toggleGroup(id) {
-    const items = document.getElementById('items_' + id);
-    const arrow = items.parentElement.querySelector('.arrow');
-    items.classList.toggle('show');
-    arrow.classList.toggle('open');
-}
-
-// === 勾选/取消变量（仅管理 selectedParams 池，不触发趋势图刷新） ===
-function toggleParam(param, el) {
-    const idx = selectedParams.findIndex(s => s.param === param);
-    if (idx >= 0) {
-        selectedParams.splice(idx, 1);
-        el.classList.remove('checked');
-        el.querySelector('.check-box').textContent = '';
-    } else {
-        // 若已存在 (color 池里) 找原来的颜色优先, 否则按当前长度分配
-        const existing = selectedParams.find(s => s.param === param);
-        const color = (existing && existing.color) || COLORS[selectedParams.length % COLORS.length];
-        selectedParams.push({
-            param: param,
-            label: LABELS[param] || param,
-            color: color,
-            yAxisIndex: 0,
-            yMin: '',
-            yMax: '',
-            offset: 0
-        });
-        el.classList.add('checked');
-        el.querySelector('.check-box').textContent = '✓';
-    }
-    document.getElementById('sidebarFooter').textContent = '已选 ' + selectedParams.length + ' 个变量';
-    renderConfig();
-}
-
-function clearAll() {
-    selectedParams = [];
-    document.querySelectorAll('.tree-param.checked').forEach(el => {
-        el.classList.remove('checked');
-        el.querySelector('.check-box').textContent = '';
-    });
-    document.getElementById('sidebarFooter').textContent = '已选 0 个变量';
-    renderConfig();
-    destroyChart();
-}
-
-// === 渲染配置面板 ===
-function renderConfig() {
-    const body = document.getElementById('configBody');
-    if (selectedParams.length === 0) {
-        body.innerHTML = '<div class="config-empty">左侧勾选变量开始分析</div>';
-        return;
-    }
-    let html = '';
-    selectedParams.forEach((s, i) => {
-        html += `<div class="config-row">
-            <span class="color-dot" style="background:${s.color};" title="${s.param}"></span>
-            <span class="param-name" title="${s.param}">${s.param}</span>
-            <span class="param-label">${s.label}</span>
-            <span style="font-size:10px;color:#94a3b8;">Y轴</span>
-            <select onchange="updateConfig(${i},'yAxisIndex',parseInt(this.value))">
-                <option value="0" ${s.yAxisIndex===0?'selected':''}>左1</option>
-                <option value="1" ${s.yAxisIndex===1?'selected':''}>右1</option>
-                <option value="2" ${s.yAxisIndex===2?'selected':''}>左2</option>
-                <option value="3" ${s.yAxisIndex===3?'selected':''}>右2</option>
-            </select>
-            <span style="font-size:10px;color:#94a3b8;" title="视觉偏移，不影响原始数值">偏移</span>
-            <input type="number" placeholder="0" value="${s.offset||0}" step="any" style="width:55px;"
-                onchange="updateConfig(${i},'offset',parseFloat(this.value)||0)" title="正数上移，负数下移">
-            <input type="number" placeholder="Min" value="${s.yMin}" step="any" style="width:50px;"
-                onchange="updateConfig(${i},'yMin',this.value)">
-            <input type="number" placeholder="Max" value="${s.yMax}" step="any" style="width:50px;"
-                onchange="updateConfig(${i},'yMax',this.value)">
-            <span class="remove-btn" onclick="removeParam(${i})" title="移除">✕</span>
-        </div>`;
-    });
-    body.innerHTML = html;
-}
-
-function updateConfig(idx, key, val) {
-    selectedParams[idx][key] = val;
-}
-
-function removeParam(idx) {
-    const p = selectedParams[idx];
-    selectedParams.splice(idx, 1);
-    const el = document.querySelector(`.tree-param[data-param="${p.param}"]`);
-    if (el) {
-        el.classList.remove('checked');
-        el.querySelector('.check-box').textContent = '';
-    }
-    document.getElementById('sidebarFooter').textContent = '已选 ' + selectedParams.length + ' 个变量';
-    renderConfig();
-    if (selectedParams.length === 0) destroyChart();
-}
-
-// === 查询 ===
-function doQuery() {
-    if (selectedParams.length === 0) return;
-    const start = document.getElementById('startTime').value;
-    const end = document.getElementById('endTime').value;
-    if (!start || !end) return;
-
-    const paramStr = selectedParams.map(s => s.param).join(',');
-    const url = '/api/trend?params=' + encodeURIComponent(paramStr) +
-                '&start=' + encodeURIComponent(start) +
-                '&end=' + encodeURIComponent(end) +
-                '&token=' + API_TOKEN;
-
-    fetch(url)
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(data => {
-            if (data.error) { alert(data.error); return; }
-            renderChart(data);
-        })
-        .catch(e => alert('请求失败: ' + e));
-}
-
-// === 渲染 uPlot 图表 ===
-function renderChart(data) {
-    destroyChart();
-
-    const cols = buildUplotData(data);
-    if (!cols) return;
-
-    // 缓存原始值（未偏移）供 tooltip 显示
-    _rawValues = data.series.map(s => s.data.map(d => d.value));
-
-    // 收集已使用的 Y 轴
-    let usedAxes = new Set();
-    selectedParams.forEach(s => usedAxes.add(s.yAxisIndex));
-    let sortedAxes = [...usedAxes].sort((a,b) => a-b);
-
-    // 映射 yAxisIndex → scale key
-    let axisToScale = {};
-    sortedAxes.forEach((id, i) => { axisToScale[id] = 'y' + i; });
-
-    // 构建 scales
-    let scales = { x: { time: true } };
-    sortedAxes.forEach((id, i) => {
-        let range = undefined;
-        selectedParams.filter(s => s.yAxisIndex === id).forEach(s => {
-            if (s.yMin !== '' && s.yMax !== '') {
-                let r = [parseFloat(s.yMin), parseFloat(s.yMax)];
-                if (!range) range = r;
-                else { range[0] = Math.min(range[0], r[0]); range[1] = Math.max(range[1], r[1]); }
-            }
-        });
-        scales['y' + i] = { auto: !range };
-        if (range) scales['y' + i].range = (u, min, max) => range;
-    });
-
-    // 构建 series
-    let series = [{}];
-    data.series.forEach(s => {
-        let cfg = selectedParams.find(x => x.param === s.param);
-        if (!cfg) return;
-        series.push({
-            label: cfg.label,
-            stroke: cfg.color,
-            _color: cfg.color,  // tooltip 用（不受 uPlot 内部转换影响）
-            width: 2,
-            scale: axisToScale[cfg.yAxisIndex],
-            spanGaps: false,
-            value: (u, v) => v == null ? '--' : Number(v).toFixed(4),
-        });
-    });
-
-    // 构建 axes: 每个 Y 轴独立配色 + 标签
-    let axes = [{
-        stroke: '#cbd5e1',
-        grid: { stroke: '#e2e8f0', width: 1 },
-        font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
-    }];
-    sortedAxes.forEach((id, i) => {
-        let isLeft = id % 2 === 0;
-        let extraSpace = Math.floor(id / 2) * 55;
-        // 该轴上的曲线
-        let axisCurves = selectedParams.filter(s => s.yAxisIndex === id);
-        // 轴标签: 单曲线用全称, 多曲线记数
-        let axisLabel = '';
-        let axisColor = '#94a3b8';
-        if (axisCurves.length === 1) {
-            axisLabel = axisCurves[0].label;
-            axisColor = axisCurves[0].color;
-        } else if (axisCurves.length > 1) {
-            axisLabel = axisCurves.length + ' 条曲线';
-            axisColor = '#64748b';
-        }
-        axes.push({
-            scale: 'y' + i,
-            side: isLeft ? 3 : 1,
-            size: 62 + extraSpace,
-            stroke: axisColor,
-            font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
-            label: axisLabel,
-            labelFont: `bold 10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif`,
-            labelGap: 4,
-            grid: {
-                show: i === 0,
-                stroke: '#f1f5f9',
-                width: 1,
-                dash: [4, 4]
-            },
-            values: (u, vals) => vals.map(v => {
-                if (v == null) return '';
-                if (Math.abs(v) >= 10000) return (v/1000).toFixed(1) + 'k';
-                if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(1);
-                if (Number.isInteger(v) && Math.abs(v) < 1000) return v.toString();
-                return v.toFixed(2);
-            }),
-        });
-    });
-
-    // 创建 uPlot
-    const container = document.getElementById('chartArea');
-    const opts = {
-        width: Math.max(container.clientWidth - 4, 400),
-        height: Math.max(container.clientHeight - 4, 300),
-        cursor: {
-            show: true,
-            x: true,
-            y: true,
-            drag: { x: true, y: false, setScale: true },
-            focus: { prox: 10 },
-            points: { show: false },
-        },
-        legend: { show: false },
-        plugins: [tooltipPlugin()],
-        scales: scales,
-        axes: axes,
-        series: series,
-    };
-
-    uplot = new uPlot(opts, cols, container);
-
-    // 缩放级别指示器
-    setupZoomIndicator();
-
-    // 自定义图例
-    buildLegend(data);
-
-    // 响应式
-    window.addEventListener('resize', () => {
-        if (uplot) {
-            const c = document.getElementById('chartArea');
-            uplot.setSize({
-                width: Math.max(c.clientWidth - 4, 400),
-                height: Math.max(c.clientHeight - 4, 300)
-            });
-        }
-    });
-}
-
-
-// === 自定义图例 ===
-function buildLegend(data) {
-    let legendDiv = document.getElementById('chart-legend');
-    if (!legendDiv) {
-        legendDiv = document.createElement('div');
-        legendDiv.id = 'chart-legend';
-        legendDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;' +
-            'border-bottom:1px solid #f1f5f9;max-height:60px;overflow-y:auto;';
-        const chartWrap = document.getElementById('chartArea').parentElement;
-        chartWrap.insertBefore(legendDiv, chartWrap.firstChild);
-    }
-    let html = '';
-    data.series.forEach((s, i) => {
-        let cfg = selectedParams.find(x => x.param === s.param);
-        if (!cfg) return;
-        html += '<label data-series-idx="' + (i+1) + '" data-series-label="' + s.label + '" style="display:flex;align-items:center;gap:4px;font-size:11px;' +
-            'color:#475569;cursor:pointer;user-select:none;padding:2px 0;" ' +
-            'onclick="toggleSeriesVis(' + (i+1) + ', this)">' +
-            '<span style="width:10px;height:2px;background:' + cfg.color + ';flex-shrink:0;"></span>' +
-            s.label + '</label>';
-    });
-    legendDiv.innerHTML = html;
-    // 绑定隐藏 series 后，uPlot 内部 idx 可能变，所以做 label → uPlot idx 映射缓存
-    legendDiv._labelToIdx = {};
-    data.series.forEach((s, i) => { legendDiv._labelToIdx[s.label] = i + 1; });
-}
-
-// === 图例切换可见性（带 tooltip 同步） ===
-function toggleSeriesVis(idx, el) {
-    if (!uplot) return;
-    const s = uplot.series[idx];
-    const visible = s.show !== false;
-    uplot.setSeries(idx, { show: !visible }, false);
-    uplot.redraw();
-    el.style.opacity = visible ? '0.35' : '1';
-    el.dataset.hidden = visible ? '1' : '0';
-    // 同步 tooltip 中对应的行（按 label 匹配）
-    if (uplot.series[idx]) {
-        const label = uplot.series[idx].label;
-        document.querySelectorAll('#uplot-tooltip [data-tip-row]').forEach(row => {
-            const rowIdx = parseInt(row.dataset.tipRow);
-            if (uplot.series[rowIdx + 1] && uplot.series[rowIdx + 1].label === label) {
-                row.style.display = visible ? 'none' : 'flex';
-            }
-        });
-    }
-}
-
-// === 保存图片 ===
-function saveChartImage() {
-    if (!uplot) return;
-    const canvas = uplot.ctx.canvas;
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(canvas, 0, 0);
-    const link = document.createElement('a');
-    link.download = 'DCS趋势_' + new Date().toISOString().slice(0,10) + '.png';
-    link.href = exportCanvas.toDataURL('image/png');
-    link.click();
-}
-
-// === 重置缩放 ===
-function resetZoom() {
-    if (!uplot || !uplot.data[0] || uplot.data[0].length < 2) return;
-    const xMin = uplot.data[0][0];
-    const xMax = uplot.data[0][uplot.data[0].length - 1];
-    uplot.setScale('x', { min: xMin, max: xMax });
-    if (uplot.scales) {
-        Object.keys(uplot.scales).forEach(k => {
-            if (k !== 'x') uplot.setScale(k, { min: null, max: null });
-        });
-    }
-}
-
-// === 缩放级别指示器 ===
-function setupZoomIndicator() {
-    if (!uplot) return;
-    let el = document.getElementById('zoomIndicator');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'zoomIndicator';
-        el.style.cssText = 'position:absolute;top:8px;right:120px;font-size:11px;color:#94a3b8;' +
-            'background:rgba(255,255,255,0.85);padding:2px 10px;border-radius:4px;pointer-events:none;z-index:10;';
-        document.getElementById('chartArea').appendChild(el);
-    }
-    const updateIndicator = () => {
-        if (!uplot || !uplot.scales.x) return;
-        const sc = uplot.scales.x;
-        const total = sc.max - sc.min;
-        if (total <= 0) { el.textContent = ''; return; }
-        const visible = (uplot.scales.x.max || 0) - (uplot.scales.x.min || 0);
-        const pct = (visible / total) * 100;
-        const level = pct >= 90 ? '' : pct >= 40 ? ' 宽' : pct >= 15 ? ' 中' : ' 细';
-        el.textContent = '范围: ' + Math.round(pct) + '%' + level;
-    };
-    if (!uplot.hooks.setScale) uplot.hooks.setScale = [];
-    uplot.hooks.setScale.push((u, key) => { if (key === 'x') updateIndicator(); });
-    updateIndicator();
-}
-
-// === 添加工具栏按钮（截图/重置） ===
-function addToolbarButtons() {
-    const toolbar = document.querySelector('.toolbar');
-    if (!toolbar || document.getElementById('btnSaveImg')) return;
-    const btnGroup = document.createElement('div');
-    btnGroup.style.cssText = 'margin-left:auto;display:flex;gap:6px;';
-    btnGroup.innerHTML =
-        '<button class="btn btn-outline btn-sm" id="btnReset" onclick="resetZoom()" title="重置缩放">↺ 重置</button>' +
-        '<button class="btn btn-outline btn-sm" id="btnSaveImg" onclick="saveChartImage()" title="保存图片">📷 截图</button>';
-    toolbar.appendChild(btnGroup);
-}
-
-// === 回转到位事件检测 ===
-let currentEvents = [];
-
-function fetchEvents() {
-    const start = document.getElementById('startTime').value;
-    const end = document.getElementById('endTime').value;
-    if (!start || !end) { alert('请先设置时间范围'); return; }
-
-    const url = '/api/trend/events?start=' + encodeURIComponent(start) +
-                '&end=' + encodeURIComponent(end) +
-                '&token=' + API_TOKEN;
-
-    const sel = document.getElementById('eventSelect');
-    sel.innerHTML = '<option value="">检测中...</option>';
-
-    fetch(url)
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(data => {
-            if (data.error) { alert(data.error); return; }
-            currentEvents = data.events;
-            sel.innerHTML = '<option value="">-- 选择开口事件 --</option>';
-            data.events.forEach((ev, i) => {
-                const d = new Date(ev.trigger_time);
-                const pad = n => String(n).padStart(2,'0');
-                const ts = pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+
-                           pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
-                sel.innerHTML += '<option value="' + i + '">' +
-                    ev.machine + ' 遥控开口 @ ' + ts + '</option>';
-            });
-            if (data.events.length === 0) {
-                sel.innerHTML = '<option value="">未检测到开口事件</option>';
-                alert('该时间范围内未检测到开口事件');
-            }
-        })
-        .catch(e => alert('事件检测失败: ' + e));
-}
-
-function onEventSelect() {
-    const idx = document.getElementById('eventSelect').value;
-    if (idx === '') return;
-    const ev = currentEvents[parseInt(idx)];
-    if (!ev) return;
-    const fmt = (iso) => {
-        const d = new Date(iso);
-        const pad = n => String(n).padStart(2,'0');
-        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
-    };
-    document.getElementById('startTime').value = fmt(ev.window_start);
-    document.getElementById('endTime').value = fmt(ev.window_end);
-    doQuery();
-}
-
-// === 初始化 ===
-initTime();
-buildTree();
-addToolbarButtons();
-
-</script>
-</body>
-</html>"""
+TREND_HTML = _load_html_template("trend.html") or ""
 
 
 @app.route("/realtime")
@@ -3839,1171 +1989,61 @@ def _detect_plugging_cycles(raw_data, sig):
 
     return cycles
 
-@app.route("/api/analysis/ping")
-def api_analysis_ping():
-    """Test InfluxDB connectivity for analysis module."""
-    try:
-        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG, timeout=5000)
-        try:
-            query_api = client.query_api()
-            flux = f'from(bucket: "{INFLUX_BUCKET}") |> range(start: -1m) |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}") |> filter(fn: (r) => r._field == "value") |> limit(n: 1)'
-            tables = query_api.query(flux)
-            return jsonify({"ok": True, "reachable": True, "message": "InfluxDB connection OK"})
-        finally:
-            client.close()
-    except Exception as e:
-        return jsonify({"ok": True, "reachable": False, "message": f"InfluxDB unreachable: {e}"})
 
-@app.route("/api/analysis/states")
-def api_analysis_states():
-    start = request.args.get("start", "").strip()
-    end = request.args.get("end", "").strip()
-    machine_id = request.args.get("machine", "all").strip()
-    if not start or not end:
-        return jsonify({"error": "missing time params"}), 400
-    try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "bad time format"}), 400
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    all_states = []
-    for mid, sig in _STATE_SIGNALS.items():
-        if machine_id != "all" and mid != machine_id:
-            continue
-        all_params = [v for k, v in sig.items() if k != "name"]
-        raw = _fetch_cycle_data(s_utc, e_utc, all_params, "30s")
-        if raw is None:
-            continue
-        states = _detect_states(raw, sig, mid)
-        all_states.extend(states)
-    all_states.sort(key=lambda s: s["time"])
-    return jsonify({"states": all_states, "count": len(all_states)})
-
-@app.route("/api/model/analyze")
-def api_model_analyze():
-    """Run full intelligent model on detected cycles: phase classification + quality scoring + anomaly detection."""
-    start = request.args.get("start", "").strip()
-    end = request.args.get("end", "").strip()
-    op_type = request.args.get("type", "all").strip()
-    machine_filter = request.args.get("machine", "all").strip()
-
-    if not start or not end:
-        return jsonify({"error": "missing time params"}), 400
-    try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "bad time format"}), 400
-
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-
-    results = []
-
-    # Collect all required params
-    all_params = set()
-    for side, sig in _OPENING_SIGNALS.items():
-        for k, v in sig.items():
-            if k != "name":
-                all_params.add(v)
-    for side, sig in _PLUGGING_SIGNALS.items():
-        for k, v in sig.items():
-            if k != "name":
-                all_params.add(v)
-    # Add hydraulic temp/press for anomaly detection
-    for mid, sig in _STATE_SIGNALS.items():
-        if 'hydraulic_temp' in sig:
-            all_params.add(sig['hydraulic_temp'])
-            all_params.add(sig['hydraulic_press'])
-
-    raw = _fetch_cycle_data(s_utc, e_utc, list(all_params), "1s")
-    if raw is None:
-        return jsonify({"error": "InfluxDB unreachable", "results": []}), 200
-
-    # Detect cycles
-    all_cycles = []
-    if op_type in ("opening", "all"):
-        for side, sig in _OPENING_SIGNALS.items():
-            all_cycles.extend(_detect_opening_cycles(raw, sig))
-    if op_type in ("plugging", "all"):
-        for side, sig in _PLUGGING_SIGNALS.items():
-            all_cycles.extend(_detect_plugging_cycles(raw, sig))
-    all_cycles.sort(key=lambda c: c["trigger_time"])
-
-    if machine_filter != "all":
-        all_cycles = [c for c in all_cycles if c["machine"] == machine_filter]
-
-    for cycle in all_cycles:
-        ws = datetime.fromisoformat(cycle["window_start"]) - LOCAL_OFFSET
-        we = datetime.fromisoformat(cycle["window_end"]) - LOCAL_OFFSET
-
-        # Find corresponding signal config
-        sig = None
-        if cycle["type"] == "opening":
-            for side, cfg in _OPENING_SIGNALS.items():
-                if cfg["name"] == cycle["machine"]:
-                    sig = cfg
-                    break
-            if sig:
-                phases = _classify_opening_phases(
-                    raw.get(sig["push_pos"], []), raw.get(sig["push_press"], []),
-                    raw.get(sig["drill_press"], []), raw.get(sig.get("impact_press", ""), []),
-                    ws, we)
-        else:
-            for side, cfg in _PLUGGING_SIGNALS.items():
-                if cfg["name"] == cycle["machine"]:
-                    sig = cfg
-                    break
-            if sig:
-                phases = _classify_plugging_phases(
-                    raw.get(sig["mud_pos"], []), raw.get(sig["mud_press"], []),
-                    raw.get(sig["mud_qty"], []), raw.get(sig.get("swing_pos", ""), []),
-                    ws, we)
-
-        if sig is None:
-            continue
-
-        quality = _score_opening_quality(cycle, phases) if cycle["type"] == "opening" else _score_plugging_quality(cycle, phases)
-
-        # Anomaly detection
-        press_key = sig.get("push_press") or sig.get("mud_press", "")
-        temp_data = []
-        for mid, state_sig in _STATE_SIGNALS.items():
-            if state_sig.get("name") == cycle["machine"]:
-                temp_data = raw.get(state_sig.get("hydraulic_temp", ""), [])
-                break
-        anomalies = _detect_anomalies(cycle, phases,
-                                       raw.get(press_key, []),
-                                       temp_data)
-
-        results.append({
-            **cycle,
-            "phases": phases,
-            "quality": quality,
-            "anomalies": anomalies,
-        })
-
-    return jsonify({"results": results, "count": len(results)})
-
-
-@app.route("/api/model/recommend")
-def api_model_recommend():
-    """Generate parameter recommendations based on historical successful cycles."""
-    start = request.args.get("start", "").strip()
-    end = request.args.get("end", "").strip()
-    machine = request.args.get("machine", "").strip()
-    op_type = request.args.get("type", "opening").strip()
-
-    if not start:
-        return jsonify({"error": "missing start time"}), 400
-    try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M") if end else s_local + timedelta(hours=24)
-    except ValueError:
-        return jsonify({"error": "bad time format"}), 400
-
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-
-    # Get all relevant params
-    all_params = set()
-    for side, sig in _OPENING_SIGNALS.items():
-        for k, v in sig.items():
-            if k != "name": all_params.add(v)
-    for side, sig in _PLUGGING_SIGNALS.items():
-        for k, v in sig.items():
-            if k != "name": all_params.add(v)
-
-    raw = _fetch_cycle_data(s_utc, e_utc, list(all_params), "1s")
-    if raw is None:
-        return jsonify({"error": "InfluxDB unreachable"}), 200
-
-    # Detect historical cycles
-    hist_cycles = []
-    if op_type in ("opening", "all"):
-        for side, sig in _OPENING_SIGNALS.items():
-            hist_cycles.extend(_detect_opening_cycles(raw, sig))
-    if op_type in ("plugging", "all"):
-        for side, sig in _PLUGGING_SIGNALS.items():
-            hist_cycles.extend(_detect_plugging_cycles(raw, sig))
-
-    # Dummy current cycle for recommendation
-    current = {"type": op_type, "machine": machine, "result": "success"}
-    recs = _recommend_parameters(current, hist_cycles, [])
-
-    return jsonify({"recommendations": recs, "history_count": len(hist_cycles), "success_count": sum(1 for c in hist_cycles if c.get("result") == "success")})
-
-
-@app.route("/api/analysis/cycles")
-def api_analysis_cycles():
-    start = request.args.get("start", "").strip()
-    end = request.args.get("end", "").strip()
-    op_type = request.args.get("type", "all").strip()
-
-    if not start or not end:
-        return jsonify({"error": "缺少时间参数"}), 400
-
-    try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "时间格式错误"}), 400
-
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-
-    all_cycles = []
-
-    if op_type in ("opening", "all"):
-        all_op_params = []
-        for side, sig in _OPENING_SIGNALS.items():
-            all_op_params.extend(v for k, v in sig.items() if k != "name")
-        all_op_params = list(set(all_op_params))
-        try:
-            raw = _fetch_cycle_data(s_utc, e_utc, all_op_params, "1s")
-            for side, sig in _OPENING_SIGNALS.items():
-                cycles = _detect_opening_cycles(raw, sig)
-                all_cycles.extend(cycles)
-        except Exception as e:
-            import traceback
-            print(f"[WARN] 开口信号查询失败: {e}", flush=True)
-
-    if op_type in ("plugging", "all"):
-        all_pl_params = []
-        for side, sig in _PLUGGING_SIGNALS.items():
-            all_pl_params.extend(v for k, v in sig.items() if k != "name")
-        all_pl_params = list(set(all_pl_params))
-        try:
-            raw = _fetch_cycle_data(s_utc, e_utc, all_pl_params, "1s")
-            for side, sig in _PLUGGING_SIGNALS.items():
-                cycles = _detect_plugging_cycles(raw, sig)
-                all_cycles.extend(cycles)
-        except Exception as e:
-            import traceback; print(f"[WARN] 堵口信号查询失败: {e}", flush=True)
-
-    all_cycles.sort(key=lambda c: c["trigger_time"])
-    return jsonify({"cycles": all_cycles, "count": len(all_cycles)})
-
-
-# ── API: 周期指标提取 ──
-@app.route("/api/analysis/metrics")
-def api_analysis_metrics():
-    ws = request.args.get("window_start", "").strip()
-    we = request.args.get("window_end", "").strip()
-    machine = request.args.get("machine", "").strip()
-    op_type = request.args.get("type", "opening").strip()
-
-    if not ws or not we:
-        return jsonify({"error": "缺少时间窗口参数"}), 400
-
-    try:
-        w_start = datetime.fromisoformat(ws)
-        w_end = datetime.fromisoformat(we)
-    except ValueError:
-        return jsonify({"error": "时间格式错误，需要 ISO 8601"}), 400
-
-    s_utc = (w_start - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
-    e_utc = (w_end - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    metrics = {"machine": machine, "type": op_type, "window_start": ws, "window_end": we}
-
-    if op_type == "opening":
-        sig = None
-        for side, cfg in _OPENING_SIGNALS.items():
-            if cfg["name"] == machine:
-                sig = cfg
-                break
-        if not sig:
-            return jsonify({"error": f"未找到设备: {machine}"}), 404
-
-        params = [sig["push_pos"], sig["push_press"], sig["swing_pos"],
-                   sig["drill_press"], sig["impact_press"]]
-        raw = _fetch_cycle_data(s_utc, e_utc, params, "1s")
-
-        push_pos_pts = sorted(raw.get(sig["push_pos"], []), key=lambda x: x[0])
-        push_press_pts = sorted(raw.get(sig["push_press"], []), key=lambda x: x[0])
-        drill_press_pts = sorted(raw.get(sig["drill_press"], []), key=lambda x: x[0])
-        impact_press_pts = sorted(raw.get(sig["impact_press"], []), key=lambda x: x[0])
-
-        metrics["push_depth"] = round(push_pos_pts[-1][1] - push_pos_pts[0][1], 3) if len(push_pos_pts) >= 2 else 0
-        metrics["push_press_max"] = round(max(v for _, v in push_press_pts), 1) if push_press_pts else 0
-        metrics["push_press_mean"] = round(sum(v for _, v in push_press_pts) / len(push_press_pts), 1) if push_press_pts else 0
-        metrics["drill_press_mean"] = round(sum(v for _, v in drill_press_pts) / len(drill_press_pts), 1) if drill_press_pts else 0
-        metrics["drill_press_max"] = round(max(v for _, v in drill_press_pts), 1) if drill_press_pts else 0
-        metrics["impact_press_active"] = bool(impact_press_pts and any(v > 0.5 for _, v in impact_press_pts))
-        metrics["data_points"] = len(push_pos_pts)
-
-        # 简易钻透检测
-        breakthrough = False
-        if len(push_pos_pts) >= 4 and push_press_pts:
-            for i in range(3, len(push_pos_pts)):
-                dp = push_pos_pts[i][1] - push_pos_pts[i - 3][1]
-                pp_vals = [v for t, v in push_press_pts if abs((t - push_pos_pts[i][0]).total_seconds()) < 2]
-                pp_prev = [v for t, v in push_press_pts if abs((t - push_pos_pts[i - 3][0]).total_seconds()) < 2]
-                if pp_vals and pp_prev:
-                    dpp = (pp_vals[0] - pp_prev[0]) / pp_prev[0] if pp_prev[0] > 0 else 0
-                    if dp > 0.1 and dpp < -0.2:
-                        breakthrough = True
-                        break
-        metrics["breakthrough"] = breakthrough
-
-    else:
-        sig = None
-        for side, cfg in _PLUGGING_SIGNALS.items():
-            if cfg["name"] == machine:
-                sig = cfg
-                break
-        if not sig:
-            return jsonify({"error": f"未找到设备: {machine}"}), 404
-
-        params = [sig["mud_press"], sig["mud_qty"], sig["mud_pos"],
-                   sig["swing_pos"]]
-        raw = _fetch_cycle_data(s_utc, e_utc, params, "1s")
-
-        mud_press_pts = sorted(raw.get(sig["mud_press"], []), key=lambda x: x[0])
-        mud_qty_pts = sorted(raw.get(sig["mud_qty"], []), key=lambda x: x[0])
-
-        metrics["mud_press_max"] = round(max(v for _, v in mud_press_pts), 1) if mud_press_pts else 0
-        metrics["mud_press_mean"] = round(sum(v for _, v in mud_press_pts) / len(mud_press_pts), 1) if mud_press_pts else 0
-        metrics["mud_qty"] = round(mud_qty_pts[-1][1], 1) if mud_qty_pts else 0
-        metrics["data_points"] = len(mud_press_pts)
-
-        hold_seconds = 0
-        hold_consecutive = 0
-        for _, v in mud_press_pts:
-            if 18 <= v <= 22:
-                hold_consecutive += 1
-            else:
-                hold_consecutive = 0
-            if hold_consecutive > hold_seconds:
-                hold_seconds = hold_consecutive
-        metrics["hold_duration_s"] = hold_seconds
-        metrics["hold_ok"] = hold_seconds >= 60
-
-    return jsonify(metrics)
-
-
-# ── API: 导出分析结果 ──
-@app.route("/api/analysis/export")
-def api_analysis_export():
-    start = request.args.get("start", "").strip()
-    end = request.args.get("end", "").strip()
-    op_type = request.args.get("type", "all").strip()
-
-    if not start or not end:
-        return jsonify({"error": "缺少时间参数"}), 400
-
-    try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "时间格式错误"}), 400
-
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-
-    all_rows = []
-
-    all_op_params = []
-    for side, sig in _OPENING_SIGNALS.items():
-        all_op_params.extend(v for k, v in sig.items() if k != "name")
-    all_op_params = list(set(all_op_params))
-
-    all_pl_params = []
-    for side, sig in _PLUGGING_SIGNALS.items():
-        all_pl_params.extend(v for k, v in sig.items() if k != "name")
-    all_pl_params = list(set(all_pl_params))
-
-    try:
-        raw_op = _fetch_cycle_data(s_utc, e_utc, all_op_params, "1s")
-        for side, sig in _OPENING_SIGNALS.items():
-            for c in _detect_opening_cycles(raw_op, sig):
-                c["id"] = f"OP-{len(all_rows) + 1:03d}"
-                all_rows.append(c)
-    except Exception:
-        pass
-
-    try:
-        raw_pl = _fetch_cycle_data(s_utc, e_utc, all_pl_params, "1s")
-        for side, sig in _PLUGGING_SIGNALS.items():
-            for c in _detect_plugging_cycles(raw_pl, sig):
-                c["id"] = f"PL-{len(all_rows) + 1:03d}"
-                all_rows.append(c)
-    except Exception:
-        pass
-
-    all_rows.sort(key=lambda r: r.get("trigger_time", ""))
-
-    buf = io.BytesIO()
-    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
-    ws = wb.add_worksheet("作业分析")
-    headers = ["ID", "设备", "类型", "触发时间", "窗口开始", "窗口结束", "耗时(秒)", "结果",
-               "推进位移(m)", "推进压力峰值", "转钎压力峰值", "钻透",
-               "打泥压力峰值", "打泥量", "保压时长(秒)", "打泥完成", "保压完成"]
-    header_fmt = wb.add_format({"bold": True, "bg_color": "#1677ff", "font_color": "#fff", "border": 1})
-    for i, h in enumerate(headers):
-        ws.write(0, i, h, header_fmt)
-
-    for ri, row in enumerate(all_rows, 1):
-        ws.write(ri, 0, row.get("id", ""))
-        ws.write(ri, 1, row.get("machine", ""))
-        ws.write(ri, 2, "开口" if row.get("type") == "opening" else "堵口")
-        ws.write(ri, 3, row.get("trigger_time", ""))
-        ws.write(ri, 4, row.get("window_start", ""))
-        ws.write(ri, 5, row.get("window_end", ""))
-        ws.write(ri, 6, row.get("duration_s", 0))
-        ws.write(ri, 7, row.get("result", ""))
-        ws.write(ri, 8, row.get("push_pos_change", 0))
-        ws.write(ri, 9, row.get("push_press_peak", 0))
-        ws.write(ri, 10, row.get("drill_press_peak", 0))
-        ws.write(ri, 11, "是" if row.get("breakthrough") else "否")
-        ws.write(ri, 12, row.get("mud_press_peak", 0))
-        ws.write(ri, 13, row.get("mud_qty", 0))
-        ws.write(ri, 14, row.get("hold_duration_s", 0))
-        ws.write(ri, 15, "是" if row.get("mud_filled") else "否")
-        ws.write(ri, 16, "是" if row.get("hold_ok") else "否")
-
-    ws.autofit()
-    wb.close()
-    buf.seek(0)
-
-    timestamp_str = datetime.now(timezone(LOCAL_OFFSET)).strftime("%Y%m%d_%H%M%S")
-    return send_file(
-        buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True, download_name=f"DCS_作业分析_{timestamp_str}.xlsx"
-    )
-
-
-# ==============================================================
 # === 作业分析页面 ===
 # ==============================================================
 
-ANALYSIS_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>炉前作业分析 — DCS</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4"></script>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+ANALYSIS_HTML = _load_html_template("analysis.html") or ""
+@app.route("/rules/opening")
+@login_required
+def rules_opening():
+    html = (RULES_OPENING_HTML or "").replace("{{ app_token }}", APP_TOKEN or "").replace("{{app_token}}", APP_TOKEN or "")
+    if not html: return "Page not found", 404
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+@app.route("/rules/plugging")
+@login_required
+def rules_plugging():
+    html = (RULES_PLUGGING_HTML or "").replace("{{ app_token }}", APP_TOKEN or "").replace("{{app_token}}", APP_TOKEN or "")
+    if not html: return "Page not found", 404
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+@app.route("/knowledge-base")
+@login_required
+def knowledge_base():
+    html = (KNOWLEDGE_BASE_HTML or "").replace("{{ app_token }}", APP_TOKEN or "").replace("{{app_token}}", APP_TOKEN or "")
+    if not html: return "Page not found", 404
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+@app.route("/labeling")
+@login_required
+def labeling():
+    html = _load_html_template("labeling.html") or ""
+    html = html.replace("{{ app_token }}", APP_TOKEN or "")
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+@app.route("/report")
+@login_required
+def report():
+    html = _load_html_template("report.html") or ""
+    html = html.replace("{{ app_token }}", APP_TOKEN or "")
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
-.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
-.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
-.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
-.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
-.nav-section { padding: 12px 0; }
-.nav-section-title { padding: 6px 20px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
-.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); text-decoration: none; }
-.nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
-.nav-item.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
-.nav-item .badge-dim { margin-left: auto; font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 500; }
-.nav-item .badge-dim.swing { background: rgba(22,119,255,0.2); color: #91caff; }
-.nav-item .badge-dim.push { background: rgba(82,196,26,0.2); color: #b7eb8f; }
-.nav-item .badge-dim.mud { background: rgba(250,173,20,0.2); color: #ffe58f; }
-.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
-.sidebar-footer .dot { display: inline-block; width: 6px; height: 6px; background: #52c41a; border-radius: 50%; margin-right: 6px; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
-
-.main { margin-left: 220px; flex: 1; min-height: 100vh; }
-.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
-.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.header .badge { background: linear-gradient(135deg, #faad14, #d48806); color: #fff; font-size: 10px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
-.header .breadcrumb { font-size: 12px; color: #94a3b8; }
-.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
-.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
-.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
-.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
-.container { padding: 24px 32px; }
-
-.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 20px; margin-bottom: 20px; }
-.stat-card { background: #fff; border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); display: flex; flex-direction: column; }
-.stat-card .stat-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; font-weight: 500; letter-spacing: 0.5px; }
-.stat-card .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.2; }
-.stat-card .stat-detail { font-size: 11px; color: #94a3b8; margin-top: 6px; }
-
-.card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); margin-bottom: 16px; overflow: hidden; }
-.card-body { padding: 24px; }
-.card-header { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; color: #0f172a; }
-.state-block { display:inline-block;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap;cursor:default;position:relative }
-.state-block.standby { background:#dbeafe;color:#1d4ed8 }
-.state-block.working { background:#dcfce7;color:#166534 }
-.state-block.fault { background:#fee2e2;color:#991b1b }
-.state-block.maintenance { background:#fef3c7;color:#92400e }
-.state-block.offline { background:#f1f5f9;color:#64748b }
-.model-badge { display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700 }
-.model-badge.A { background:#dcfce7;color:#166534 }
-.model-badge.B { background:#dbeafe;color:#1d4ed8 }
-.model-badge.C { background:#fef9c3;color:#854d0e }
-.model-badge.D { background:#fee2e2;color:#991b1b }
-.phase-bar { display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:4px;gap:1px }
-.phase-seg { height:100% }
-.phase-seg.approach { background:#94a3b8 }
-.phase-seg.initial_drill { background:#60a5fa }
-.phase-seg.steady_drill { background:#3b82f6 }
-.phase-seg.breakthrough { background:#f59e0b }
-.phase-seg.retract { background:#10b981 }
-.phase-seg.mud_fill { background:#a78bfa }
-.phase-seg.pressure_hold { background:#8b5cf6 }
-.phase-seg.unknown { background:#e2e8f0 }
-.model-panel { background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden }
-.model-panel-header { padding:14px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px;color:#0f172a }
-.rec-card { background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:12px 16px }
-.rec-card .rec-title { font-size:11px;color:#0369a1;margin-bottom:4px }
-.rec-card .rec-value { font-size:24px;font-weight:700;color:#0c4a6e }
-.rec-card .rec-unit { font-size:11px;color:#0369a1;font-weight:400 }
-.rec-card .rec-reason { font-size:10px;color:#64748b;margin-top:4px }
-.state-separator { display:inline-block;color:#cbd5e1;font-size:14px;margin:0 2px }
-
-.filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-.filter-group { display: flex; flex-direction: column; gap: 5px; }
-.filter-group label { font-size: 11px; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
-.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; transition: all 0.2s; background: #fff; color: #1f2937; min-width: 130px; }
-.filter-group input:focus, .filter-group select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
-
-.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
-.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
-.btn-primary:disabled { background: #b0c4de; box-shadow: none; cursor: not-allowed; transform: none; }
-.btn-success { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; box-shadow: 0 2px 6px rgba(82,196,26,0.2); }
-.btn-success:hover { background: linear-gradient(135deg, #73d13d, #52c41a); box-shadow: 0 4px 12px rgba(82,196,26,0.3); transform: translateY(-1px); }
-.btn-success:disabled { background: #b7eb8f; box-shadow: none; cursor: not-allowed; transform: none; }
-.btn-ghost { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; color: #64748b; font-weight: 500; transition: all 0.2s; text-decoration: none; }
-.btn-ghost:hover { border-color: #1677ff; color: #1677ff; background: #f0f5ff; }
-
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th { background: #f8fafc; font-weight: 600; text-align: left; padding: 10px 12px; color: #64748b; font-size: 11px; border-bottom: 1px solid #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; }
-td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
-tr:hover { background: #f8fafc; }
-
-.tag { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; display: inline-block; }
-.tag-ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
-.tag-fail { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-.tag-warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
-.tag-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
-
-.loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
-.loading-overlay.show { display: flex; }
-.loading-box { background: #fff; padding: 32px 48px; border-radius: 16px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
-.spinner { width: 36px; height: 36px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s cubic-bezier(0.4,0,0.2,1) infinite; margin: 0 auto 16px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.chart-area { min-height: 400px; position: relative; }
-.empty-state { text-align: center; padding: 48px 20px; color: #94a3b8; }
-.empty-state h3 { font-size: 15px; margin-bottom: 6px; color: #64748b; }
-.empty-state p { font-size: 12px; }
-
-.alert { padding: 12px 20px; border-radius: 12px; margin-bottom: 16px; font-size: 13px; display: none; }
-.alert-error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
-.alert-info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
-
-.user-area { display: flex; align-items: center; gap: 10px; }
-.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
-.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
-
-@media (max-width: 768px) {
-    .sidebar { width: 60px; min-width: 60px; }
-    .sidebar .nav-item span, .sidebar .nav-section-title, .sidebar .badge-dim { display: none; }
-    .main { margin-left: 60px; }
-    .filter-bar { flex-direction: column; }
-}
-</style>
-</head>
-<body>
-
-<div class="sidebar">
-    <div class="sidebar-header">
-        <h2>DCS 分析平台</h2>
-        <div class="version">GBDT-MPC-PID 三级架构</div>
-    </div>
-
-    <div class="nav-section">
-        <div class="nav-section-title">分析功能</div>
-        <a class="nav-item" href="javascript:switchOpType('opening')" id="navOpening">开口作业分析</a>
-        <a class="nav-item" href="javascript:switchOpType('plugging')" id="navPlugging">堵口作业分析</a>
-        <a class="nav-item" href="javascript:switchOpType('all')" id="navAll">全部作业</a>
-    </div>
-
-    <div class="nav-section" id="dimSectionOpening">
-        <div class="nav-section-title">信号维度 — 开口</div>
-        <a class="nav-item" href="javascript:filterDim('push')">推进系统 <span class="badge-dim push">位移/压力</span></a>
-        <a class="nav-item" href="javascript:filterDim('swing')">回转系统 <span class="badge-dim swing">角度/压力</span></a>
-        <a class="nav-item" href="javascript:filterDim('drill')">转钎系统</a>
-        <a class="nav-item" href="javascript:filterDim('impact')">冲击系统</a>
-        <a class="nav-item" href="javascript:filterDim('tilt')">倾动系统</a>
-        <a class="nav-item" href="javascript:filterDim('hydraulic')">液压站</a>
-    </div>
-
-    <div class="nav-section" id="dimSectionPlugging" style="display:none">
-        <div class="nav-section-title">信号维度 — 堵口</div>
-        <a class="nav-item" href="javascript:filterDim('mud')">打泥系统 <span class="badge-dim mud">量/压力</span></a>
-        <a class="nav-item" href="javascript:filterDim('cannon')">转炮/退炮</a>
-        <a class="nav-item" href="javascript:filterDim('retreat')">退泥回路</a>
-        <a class="nav-item" href="javascript:filterDim('hydraulic_p')">液压站</a>
-    </div>
-
-    <div class="nav-section">
-        <div class="nav-section-title">数据操作</div>
-        <a class="nav-item" href="javascript:exportResult()">导出 Excel</a>
-    </div>
-
-    <div class="sidebar-footer">
-        <span class="dot" id="sysStatus"></span> <span id="sidebarUser">admin</span><a style="margin-left:auto;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.45);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a>
-    </div>
-</div>
-
-<div class="main">
-
-    <div class="header">
-        <h1>炉前作业分析</h1>
-        <span class="badge">GBDT-MPC-PID</span>
-        <span class="breadcrumb" id="pageDesc">周期识别 · 阶段标注 · 指标提取</span>
-        
-        <div class="nav-links">
-            <a href="/">历史查询</a>
-            <a href="/realtime">实时监控</a>
-            <a href="/trend">趋势分析</a>
-            <a href="/analysis" class="active">作业分析</a>
-        </div>
-    </div>
-
-    <div class="container">
-
-        <div id="alertBox" class="alert"></div>
-
-        <div class="filter-bar">
-            <div class="filter-group"><label>开始时间</label><input type="datetime-local" id="dStart"></div>
-            <div class="filter-group"><label>结束时间</label><input type="datetime-local" id="dEnd"></div>
-            <div class="filter-group"><label>作业类型</label>
-                <select id="dType" onchange="switchOpType(this.value)"><option value="all">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select>
-            </div>
-            <div class="filter-group"><label>设备</label>
-                <select id="dMachine"><option value="all">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
-            </div>
-            <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
-            <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
-            <button class="btn" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff" onclick="runModelAnalysis()" id="btnModel">智能分析</button>
-            <span id="queryTimeRange" style="margin-left:auto;font-size:12px;color:#64748b;white-space:nowrap">--</span>
-        </div>
-
-        <div class="stats-row" id="statsRow"></div>
-
-        <div class="card" id="stateTimelineCard" style="display:none">
-            <div class="card-header"><span class="dot-indicator" style="background:#8b5cf6"></span>设备状态时间线</div>
-            <div class="card-body" id="stateTimeline" style="max-height:200px;overflow-y:auto;padding:12px 24px">
-                <div id="stateTimelineContent" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
-            </div>
-        </div>
-
-
-        <div style="display:flex;gap:16px;margin-bottom:16px">
-            <div class="card" style="flex:1;margin-bottom:0">
-                <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">
-                    关键指标说明 <span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:8px">点击展开</span>
-                </div>
-                <div class="card-body" style="display:none;font-size:12px;line-height:1.8;color:#475569">
-                    <table style="font-size:11px"><thead><tr><th style="width:110px">指标</th><th>含义</th></tr></thead><tbody>
-                    <tr><td style="font-weight:600">钻进位移</td><td>开口小车推进位置变化量（终点-起点），反映开口深度</td></tr>
-                    <tr><td style="font-weight:600">推进压力峰值</td><td>推进进油压力在窗口内最大值（MPa），反映钻进阻力</td></tr>
-                    <tr><td style="font-weight:600">转钎压力峰值</td><td>转钎进油压力在窗口内最大值（MPa），反映钻杆扭矩</td></tr>
-                    <tr><td style="font-weight:600">冲击状态</td><td>冲击进油压力是否激活（>0.5MPa），反映冲击锤状态</td></tr>
-                    <tr><td style="font-weight:600">打泥量</td><td>打泥累计值，反映注入铁口的炮泥总量</td></tr>
-                    <tr><td style="font-weight:600">打泥压力峰值</td><td>打泥压力窗口内最大值（MPa），19-21MPa为合理</td></tr>
-                    <tr><td style="font-weight:600">耗时</td><td>触发到结束完整时长（根据实际位移/压力动态判定）</td></tr>
-                    </tbody></table>
-                </div>
-            </div>
-            <div class="card" style="flex:1;margin-bottom:0">
-                <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">
-                    结果判定说明 <span style="font-size:11px;color:#94a3b8;font-weight:400;margin-left:8px">点击展开</span>
-                </div>
-                <div class="card-body" style="display:none;font-size:12px;line-height:1.8;color:#475569">
-                    <table style="font-size:11px"><thead><tr><th style="width:70px">结果</th><th>判定条件</th></tr></thead><tbody>
-                    <tr><td><span class="tag tag-ok">成功</span></td><td>开口：推进位移骤增(>0.1m)且压力骤降(>20%)；堵口：打泥量达标+保压≥60s</td></tr>
-                    <tr><td><span class="tag tag-fail">失败</span></td><td>开口：无有效钻进位移；堵口：打泥量未达标</td></tr>
-                    <tr><td><span class="tag tag-warn">未完成</span></td><td>开口：有钻进但未检测到钻透信号</td></tr>
-                    <tr><td><span class="tag tag-info">未完整</span></td><td>堵口：打泥完成但保压不足</td></tr>
-                    </tbody></table>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header" onclick="var b=this.parentElement.querySelector('.card-body');b.style.display=b.style.display==='none'?'':'none'" style="cursor:pointer">作业周期列表 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="cycleCount"></span> <span style="font-size:10px;color:#94a3b8;margin-left:8px">点击折叠</span></div>
-            <div class="card-body" style="overflow-x:auto">
-                <div id="cycleEmpty" class="empty-state"><h3>选择时间范围</h3><p>点击「开始分析」自动识别开口和堵口作业周期，按GBDT-MPC-PID协议分类</p></div>
-                <table id="cycleTable" style="display:none">
-                    <thead><tr>
-                        <th>设备</th><th>类型</th><th>触发时间</th><th>作业窗口</th><th>耗时</th><th>关键指标</th><th>结果</th><th>操作</th>
-                    </tr></thead>
-                    <tbody id="cycleBody"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="card" id="detailCard" style="display:none">
-            <div class="card-header">作业详情 <span id="detailTitle" style="font-size:12px;color:#94a3b8;font-weight:400"></span></div>
-            <div class="card-body">
-                <div id="detailMetrics" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
-                <div class="chart-area"><canvas id="detailChart"></canvas></div>
-            </div>
-        </div>
-
-    </div>
-</div>
-
-<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">正在查询...</div></div></div>
-
-<script>
-var APP_TOKEN = "{{ app_token }}";
-var globalCycles = [];
-var chartInst = null;
-var PARAM_CONFIG = {{ groups_json | safe }};
-var _currentDimFilter = null;
-var _currentOpType = 'all';
-
-function getLabelMap(){
-    var labels = {};
-    (PARAM_CONFIG.groups || []).forEach(function(g){
-        if(g.labels) Object.assign(labels, g.labels);
-    });
-    if(PARAM_CONFIG.labels) Object.assign(labels, PARAM_CONFIG.labels);
-    return labels;
-}
-
-function fmtLocalDT(d){
-    var p = function(n){return String(n).padStart(2,'0');};
-    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
-}
-function initDates(){
-    var now = new Date();
-    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    document.getElementById('dStart').value = fmtLocalDT(today);
-    document.getElementById('dEnd').value = fmtLocalDT(now);
-    document.getElementById('queryTimeRange').textContent = '--';
-}
-initDates();
-
-function checkLogin(){
-    fetch('/api/user?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
-        if(!d.logged_in){window.location.href='/';}
-        if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};
-    }).catch(function(e){console.log('Auth check failed, redirecting:', e);window.location.href='/';});
-}
-checkLogin();
-
-function checkInfluxDB(){
-    fetch('/api/analysis/ping?token='+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
-        var el=document.getElementById('sysStatus');
-        if(d.reachable){el.style.background='#52c41a';el.style.boxShadow='0 0 4px rgba(82,196,26,0.5)';}
-        else{el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';showAlert('InfluxDB unreachable: '+d.message,'error');}
-    }).catch(function(e){
-        var el=document.getElementById('sysStatus');
-        el.style.background='#ff4d4f';el.style.boxShadow='0 0 8px rgba(255,77,79,0.5)';
-        showAlert('InfluxDB ping failed: '+e.message,'error');
-    });
-}
-checkInfluxDB();
-
-function doLogout(){
-    fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-        window.location.href='/';
-    });
-}
-
-function switchOpType(t){
-    _currentOpType = t;
-    document.getElementById('dType').value = t;
-    document.getElementById('navOpening').classList.toggle('active', t==='opening');
-    document.getElementById('navPlugging').classList.toggle('active', t==='plugging');
-    document.getElementById('navAll').classList.toggle('active', t==='all');
-    document.getElementById('dimSectionOpening').style.display = (t==='plugging')?'none':'';
-    document.getElementById('dimSectionPlugging').style.display = (t==='opening'||t==='all')?'none':'';
-    document.getElementById('pageDesc').textContent = t==='opening'?'回转·倾动·转钎·冲击·推进·液压站':t==='plugging'?'转炮·打泥·保压·退炮·液压站':'周期识别 · 阶段标注 · 指标提取';
-}
-
-function filterDim(dim){
-    _currentDimFilter = dim;
-    var items = document.querySelectorAll('.nav-section .nav-item');
-    items.forEach(function(it){it.classList.remove('active');});
-    if(_currentOpType==='plugging')document.getElementById('navPlugging').classList.add('active');
-    else if(_currentOpType==='opening')document.getElementById('navOpening').classList.add('active');
-    else document.getElementById('navAll').classList.add('active');
-    if(globalCycles.length>0)renderCycles();
-}
-
-function showAlert(msg, cls){
-    var el = document.getElementById('alertBox');
-    el.textContent = msg;
-    el.className = 'alert alert-'+cls;
-    setTimeout(function(){el.className='alert';el.textContent='';}, 6000);
-}
-
-function showLoading(msg){
-    document.getElementById('loadingMsg').textContent = msg || '正在查询...';
-    document.getElementById('loading').classList.add('show');
-}
-function hideLoading(){ document.getElementById('loading').classList.remove('show'); }
-
-function renderTag(result){
-    if(result=='success') return '<span class="tag tag-ok">成功</span>';
-    if(result=='fail') return '<span class="tag tag-fail">失败</span>';
-    if(result=='incomplete') return '<span class="tag tag-warn">未完成</span>';
-    if(result=='partial') return '<span class="tag tag-info">未完整</span>';
-    return result||'--';
-}
-
-function formatBeijingTime(isoStr){
-    if(!isoStr)return'--';
-    var m=isoStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
-    if(m)return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4];
-    return isoStr.substring(0,19);
-}
-function formatTimeOnly(isoStr){
-    if(!isoStr)return'--';
-    var m=isoStr.match(/T(\d{2}:\d{2}:\d{2})/);
-    if(m)return m[1];
-    return isoStr.substring(11,19);
-}
-function renderOpType(t){
-    return t=='opening' ? '<span class="tag tag-info">开口</span>' : '<span class="tag tag-warn">堵口</span>';
-}
-
-var globalModelResults = [];
-
-function runModelAnalysis(){
-    var start = document.getElementById('dStart').value;
-    var end = document.getElementById('dEnd').value;
-    var opType = document.getElementById('dType').value;
-    var machine = document.getElementById('dMachine').value;
-    if(!start||!end){showAlert('请选择时间范围','error');return;}
-    document.getElementById('btnModel').disabled = true;
-    showAlert('正在运行智能模型分析...','info');
-    var url = '/api/model/analyze?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(data){
-        globalModelResults = data.results||[];
-        renderModelResults();
-        loadRecommendations(start, end, opType, machine);
-        document.getElementById('btnModel').disabled = false;
-        showAlert('模型分析完成: '+globalModelResults.length+' 个周期已评分','info');
-    }).catch(function(e){
-        showAlert('模型分析失败: '+e.message,'error');
-        document.getElementById('btnModel').disabled = false;
-    });
-}
-
-function loadRecommendations(start, end, opType, machine){
-    if(opType==='all') opType='opening';
-    var url = '/api/model/recommend?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end||start)+'&type='+opType+'&machine='+encodeURIComponent(machine)+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){return r.json()}).then(function(data){
-        renderRecommendations(data.recommendations||[], data.history_count||0, data.success_count||0);
-    }).catch(function(e){console.log('Recommend load failed:',e)});
-}
-
-function renderModelResults(){
-    var card = document.getElementById('modelCard');
-    var body = document.getElementById('modelBody');
-    if(globalModelResults.length===0){card.style.display='none';return;}
-    card.style.display='';
-    var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">';
-    globalModelResults.forEach(function(r){
-        var grade=r.quality.grade;
-        var gradeCls={'优':'A','良':'B','中':'C','差':'D'}[grade]||'D';
-        html+='<div style="border:1px solid #f1f5f9;border-radius:12px;padding:14px;background:#fafbfc">';
-        html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-        html+='<span style="font-weight:600;font-size:12px">'+r.machine+'</span>';
-        html+='<span style="font-size:10px;color:#94a3b8">'+r.type+' | '+r.trigger_time.substring(11,19)+'</span>';
-        html+='</div>';
-        // Quality score
-        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
-        html+='<span style="font-size:28px;font-weight:700;color:'+(r.quality.score>=80?'#16a34a':r.quality.score>=60?'#d97706':'#dc2626')+'">'+r.quality.score+'</span>';
-        html+='<span class="model-badge '+gradeCls+'">'+grade+'</span>';
-        html+='</div>';
-        // Details
-        html+='<div style="font-size:10px;color:#64748b;margin-bottom:8px">'+r.quality.details.join(' | ')+'</div>';
-        // Phase bar
-        if(r.phases.length>0){
-            var totalDur=r.phases.reduce(function(s,p){return s+(p.duration_s||0)},0)||1;
-            html+='<div class="phase-bar">';
-            r.phases.forEach(function(p){
-                var pct=Math.max((p.duration_s/totalDur)*100,2);
-                html+='<div class="phase-seg '+p.phase+'" style="width:'+pct+'%" title="'+p.label+': '+p.duration_s+'s"></div>';
-            });
-            html+='</div>';
-            html+='<div style="font-size:9px;color:#94a3b8;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">';
-            r.phases.forEach(function(p){
-                html+='<span>'+p.label+' '+p.duration_s+'s</span>';
-            });
-            html+='</div>';
-        }
-        // Anomalies
-        if(r.anomalies.length>0){
-            html+='<div style="margin-top:6px;font-size:10px;color:#dc2626">';
-            r.anomalies.forEach(function(a){html+='<span style="margin-right:6px">..'+a+'</span>'});
-            html+='</div>';
-        }
-        html+='</div>';
-    });
-    html+='</div>';
-    body.innerHTML=html;
-}
-
-function renderRecommendations(recs, histCount, succCount){
-    var card = document.getElementById('recommendCard');
-    var body = document.getElementById('recommendBody');
-    if(recs.length===0){card.style.display='none';return;}
-    card.style.display='';
-    var html='';
-    recs.forEach(function(r){
-        html+='<div class="rec-card">';
-        html+='<div class="rec-title">'+r.param+'</div>';
-        html+='<div class="rec-value">'+r.value+'<span class="rec-unit"> '+r.unit+'</span></div>';
-        html+='<div class="rec-reason">'+r.reason+'</div>';
-        html+='</div>';
-    });
-    html+='<div style="font-size:10px;color:#94a3b8;grid-column:1/-1">基于 '+succCount+'/'+histCount+' 次历史成功作业</div>';
-    body.innerHTML=html;
-}
-
-function runAnalysis(){
-    var start = document.getElementById('dStart').value;
-    var end = document.getElementById('dEnd').value;
-    var opType = document.getElementById('dType').value;
-    var machine = document.getElementById('dMachine').value;
-
-    if(!start||!end){
-        showAlert('请选择开始和结束时间', 'error');
-        return;
-    }
-    var diff =(new Date(end).getTime()-new Date(start).getTime())/3600000;
-    if(diff > 24){
-        showAlert('时间跨度不能超过24小时，当前跨度 '+Math.round(diff)+' 小时', 'error');
-        return;
-    }
-    if(diff < 0){
-        showAlert('结束时间不能早于开始时间', 'error');
-        return;
-    }
-    if(!APP_TOKEN){
-        showAlert('系统配置错误：缺少 API Token，请联系管理员', 'error');
-        return;
-    }
-
-    document.getElementById('btnAnalyze').disabled = true;
-    showLoading('正在检测作业周期...');
-    showAlert('正在查询 InfluxDB，请稍候...', 'info');
-
-    var url = '/api/analysis/cycles?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){
-        if(!r.ok) throw new Error('服务器返回 HTTP '+r.status);
-        return r.json();
-    }).then(function(data){
-        if(data.error){
-            showAlert(data.error, 'error');
-            hideLoading();
-            document.getElementById('btnAnalyze').disabled = false;
-            return;
-        }
-        globalCycles = data.cycles || [];
-        if(machine!=='all'){
-            globalCycles = globalCycles.filter(function(c){return c.machine===machine;});
-        }
-        renderCycles();
-        loadStates();
-        renderStats();
-        document.getElementById('btnExport').disabled = globalCycles.length === 0;
-        document.getElementById('btnAnalyze').disabled = false;
-        hideLoading();
-        document.getElementById('queryTimeRange').textContent = '查询: '+start.replace('T',' ')+' ~ '+end.replace('T',' ');
-        showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
-    }).catch(function(e){
-        showAlert('分析失败: '+e.message, 'error');
-        hideLoading();
-        document.getElementById('btnAnalyze').disabled = false;
-    });
-}
-
-function renderStats(){
-    var openCycles = globalCycles.filter(function(c){return c.type=='opening';});
-    var plugCycles = globalCycles.filter(function(c){return c.type=='plugging';});
-    var openOk = openCycles.filter(function(c){return c.result=='success'||c.breakthrough;}).length;
-    var plugOk = plugCycles.filter(function(c){return c.result=='success';}).length;
-
-    var openDur = 0, plugDur = 0;
-    if(openCycles.length>0){var t=openCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);openDur=Math.round(t/openCycles.length);}
-    if(plugCycles.length>0){var t=plugCycles.reduce(function(s,c){return s+(c.duration_s||0);},0);plugDur=Math.round(t/plugCycles.length);}
-
-    var html = '';
-    html += '<div class="stat-card"><div class="stat-label">开口作业</div><div class="stat-value">'+openCycles.length+' 次</div><div class="stat-detail">'+openOk+' 次钻透 | 均 '+Math.floor(openDur/60)+'m'+(openDur%60)+'s</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">堵口作业</div><div class="stat-value">'+plugCycles.length+' 次</div><div class="stat-detail">'+plugOk+' 次完成 | 均 '+Math.floor(plugDur/60)+'m'+(plugDur%60)+'s</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">开口成功率</div><div class="stat-value">'+(openCycles.length>0?Math.round(openOk/openCycles.length*100):0)+'%</div><div class="stat-detail">钻透/总数</div></div>';
-    html += '<div class="stat-card"><div class="stat-label">堵口成功率</div><div class="stat-value">'+(plugCycles.length>0?Math.round(plugOk/plugCycles.length*100):0)+'%</div><div class="stat-detail">完成/总数</div></div>';
-    document.getElementById('statsRow').innerHTML = html;
-    document.getElementById('cycleCount').textContent = '共 '+globalCycles.length+' 个周期';
-}
-
-function renderCycles(){
-    var tbody = document.getElementById('cycleBody');
-    var filtered = globalCycles;
-    if(_currentDimFilter){
-        filtered = globalCycles;
-    }
-    if(filtered.length===0){
-        tbody.innerHTML = '';
-        document.getElementById('cycleTable').style.display = 'none';
-        document.getElementById('cycleEmpty').style.display = '';
-        document.getElementById('cycleEmpty').innerHTML = '<h3>'+(globalCycles.length===0?'未检测到作业周期':'当前筛选无匹配周期')+'</h3><p>'+(globalCycles.length===0?'选择时间范围后点击「开始分析」':'尝试调整筛选条件')+'</p>';
-        return;
-    }
-    document.getElementById('cycleEmpty').style.display = 'none';
-    document.getElementById('cycleTable').style.display = '';
-
-    var html = '';
-    filtered.forEach(function(c,i){
-        var keyMetric = '';
-        if(c.type=='opening'){
-            keyMetric = '钻进'+(c.push_pos_change||0).toFixed(3)+'m | 推进峰'+(c.push_press_peak||0).toFixed(0)+'MPa';
-            if(c.breakthrough)keyMetric += ' | 已钻透';
-        }else{
-            keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
-            if(c.hold_ok)keyMetric += ' | 保压OK';
-        }
-        var winStart = formatTimeOnly(c.window_start);
-        var winEnd = formatTimeOnly(c.window_end);
-        var durMin = Math.floor((c.duration_s||0)/60);
-        var durSec = Math.round((c.duration_s||0)%60);
-        html += '<tr>';
-        html += '<td style="font-weight:600">'+c.machine+'</td>';
-        html += '<td>'+renderOpType(c.type)+'</td>';
-        html += '<td>'+formatBeijingTime(c.trigger_time)+'</td>';
-        html += '<td>'+winStart+' ~ '+winEnd+'</td>';
-        html += '<td>'+durMin+'分'+durSec+'秒</td>';
-        html += '<td style="font-size:11px">'+keyMetric+'</td>';
-        html += '<td>'+renderTag(c.result)+'</td>';
-        html += '<td><button class="btn-ghost" onclick="showDetail('+globalCycles.indexOf(c)+')">详情</button></td>';
-        html += '</tr>';
-    });
-    tbody.innerHTML = html;
-}
-
-function showDetail(idx){
-    var c = globalCycles[idx];
-    if(!c)return;
-    document.getElementById('detailCard').style.display = '';
-    document.getElementById('detailTitle').textContent = c.machine + ' / ' + ((c.type=='opening')?'开口':c.type=='plugging'?'堵口':c.type);
-    document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
-
-    showLoading('正在提取指标...');
-    var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){return r.json()}).then(function(metrics){
-        if(metrics.error){showAlert(metrics.error,'error');hideLoading();return;}
-        renderMetrics(metrics);
-        loadDetailChart(c, metrics);
-        hideLoading();
-    }).catch(function(e){showAlert('指标提取失败: '+e.message,'error');hideLoading();});
-}
-
-function renderMetrics(m){
-    var html = '';
-    if(m.type=='opening'){
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">冲击状态</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
-    }else{
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格 (≥60s)':'保压不足 (<60s)')+'</div></div>';
-    }
-    document.getElementById('detailMetrics').innerHTML = html;
-}
-
-function loadDetailChart(c, metrics){
-    var labels = getLabelMap();
-    var wStart = c.window_start;
-    var wEnd = c.window_end;
-    var sigs;
-    if(c.type=='opening'){
-        sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88','LT_LQFC_63'] :
-            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125','LT_LQFC_100'];
-    }else{
-        sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_138','LT_LQFC_179','LT_LQFC_135'] :
-            ['LT_LQFC_161','LT_LQFC_180','LT_LQFC_158'];
-    }
-    var url = '/api/trend?params='+sigs.join(',')+'&start='+encodeURIComponent(wStart.substring(0,16))+'&end='+encodeURIComponent(wEnd.substring(0,16));
-    fetch(url+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
-        if(data.error){return;}
-        var ctx = document.getElementById('detailChart').getContext('2d');
-        if(chartInst)chartInst.destroy();
-        var datasets = [];
-        var colors = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1'];
-        data.series.forEach(function(s,i){
-            var pts = s.data || [];
-            var values = pts.map(function(p){return p.value});
-            var isPos = (s.param||'').indexOf('67')>0||(s.param||'').indexOf('104')>0||(s.param||'').indexOf('160')>0||(s.param||'').indexOf('63')>0||(s.param||'').indexOf('100')>0||(s.param||'').indexOf('135')>0||(s.param||'').indexOf('158')>0;
-            var yAxisID = isPos ? 'y-pos' : 'y-press';
-            datasets.push({label:labels[s.param]||s.param,data:values,borderColor:colors[i%colors.length],backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0.1,yAxisID:yAxisID,fill:false});
-        });
-        chartInst = new Chart(ctx,{type:'line',data:{labels:data.series.length>0?(data.series[0].data||[]).map(function(p){return new Date(p.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}):[],datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{legend:{position:'top',labels:{font:{size:11},usePointStyle:true,padding:16}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{font:{size:10},maxTicksLimit:15},grid:{color:'#f1f5f9'}},'y-press':{type:'linear',display:true,position:'left',title:{display:true,text:'压力 (MPa)',font:{size:10}},ticks:{font:{size:10}},grid:{color:'#f1f5f9'}},'y-pos':{type:'linear',display:true,position:'right',title:{display:true,text:'位置/角度',font:{size:10}},ticks:{font:{size:10}},grid:{display:false}}}}});
-        document.getElementById('detailChart').parentElement.style.height = '400px';
-    }).catch(function(){});
-}
-
-
-function loadStates(){
-    var start = document.getElementById('dStart').value;
-    var end = document.getElementById('dEnd').value;
-    if(!start||!end) return;
-    var url = '/api/analysis/states?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&machine=all&token='+APP_TOKEN;
-    fetch(url).then(function(r){return r.json()}).then(function(data){
-        renderStateTimeline(data.states||[]);
-    }).catch(function(e){console.log('State load failed:',e)});
-}
-
-function renderStateTimeline(states){
-    var card = document.getElementById('stateTimelineCard');
-    var content = document.getElementById('stateTimelineContent');
-    if(states.length===0){card.style.display='none';return;}
-    card.style.display='';
-    var colors={'standby':'standby','working':'working','fault':'fault','maintenance':'maintenance','offline':'offline'};
-    var html='';
-    var lastMachine='';
-    states.forEach(function(s,i){
-        if(s.machine!==lastMachine){
-            if(lastMachine!=='') html+='<div style="width:100%;height:1px;margin:6px 0;background:#f1f5f9"></div>';
-            html+='<div style="font-size:10px;color:#94a3b8;font-weight:600;width:100%;margin-bottom:4px">'+s.machine+'</div>';
-            lastMachine=s.machine;
-        }
-        var t=s.time.substring(11,16);
-        html+='<span class="state-block '+s.state+'" title="'+s.time+'">'+t+' '+s.label+'</span>';
-        if(i<states.length-1 && states[i+1].machine===s.machine) html+='<span class="state-separator">→</span>';
-    });
-    content.innerHTML=html;
-}
-
-function exportResult(){
-    if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
-    var start = document.getElementById('dStart').value;
-    var end = document.getElementById('dEnd').value;
-    var opType = document.getElementById('dType').value;
-    var url = '/api/analysis/export?start='+encodeURIComponent(start)+'&end='+encodeURIComponent(end)+'&type='+opType+'&token='+APP_TOKEN;
-    window.location.href = url;
-}
-</script>
-</body>
-</html>
-"""
 @app.route("/analysis")
 @login_required
 def analysis():
-    html = ANALYSIS_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG))
+    html = _load_html_template("analysis.html") or _load_html_template("analysis_new.html") or ""
+    html = html.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
     resp = make_response(render_template_string(html))
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -5011,85 +2051,11 @@ def analysis():
 
 
 # === 系统配置页面 ===
-SETTINGS_HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>系统配置 — DCS</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f7fa;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.06);padding:32px;width:440px;max-width:95vw}
-.card h2{font-size:18px;margin-bottom:20px;color:#1f2937}
-.form-group{margin-bottom:14px}
-.form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:4px}
-.form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none}
-.form-group input:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
-.btn{width:100%;padding:10px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#1677ff,#0958d9);margin-top:8px}
-.btn:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
-.msg{padding:8px 12px;border-radius:6px;font-size:12px;margin-top:12px;display:none}
-.msg.ok{display:block;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
-.msg.err{display:block;background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
-</style>
-</head>
-<body>
-<div class="card">
-<h2>⚙ 系统配置</h2>
-<form id="settingsForm" onsubmit="saveSettings(event)">
-<div class="form-group"><label>InfluxDB 地址</label><input id="influxUrl" placeholder="http://10.56.128.202:8086"></div>
-<div class="form-group"><label>InfluxDB Token</label><input id="influxToken" type="password" placeholder="输入 Token"></div>
-<div class="form-group"><label>组织 (Org)</label><input id="influxOrg" placeholder="myOrg"></div>
-<div class="form-group"><label>Bucket</label><input id="influxBucket" placeholder="islag"></div>
-<div class="form-group"><label>查询超时 (毫秒)</label><input id="influxTimeout" type="number" placeholder="180000"></div>
-<div class="form-group"><label>Web 访问 Token</label><input id="appToken" placeholder="dcs2026"></div>
-<div class="form-group"><label>设置密码</label><input id="settingsPwd" type="password" placeholder="123456" autocomplete="new-password" style="display:none">
-<input id="settingsPwdConfirm" type="password" placeholder="确认密码" style="display:none"></div>
-<button type="button" class="btn" onclick="showPwd()" id="changePwdBtn">修改密码</button>
-<button type="submit" class="btn">保存配置</button>
-</form>
-<div class="msg" id="msg"></div>
-</div>
-<script>
-fetch('/api/settings/config?token='+'dcs2026').then(r=>r.json()).then(d=>{
-    document.getElementById('influxUrl').value=d.INFLUX_URL||'';
-    document.getElementById('influxOrg').value=d.INFLUX_ORG||'';
-    document.getElementById('influxBucket').value=d.INFLUX_BUCKET||'';
-    document.getElementById('influxTimeout').value=d.INFLUX_TIMEOUT_MS||'';
-    document.getElementById('appToken').value=d.APP_TOKEN.includes('***')?'':d.APP_TOKEN;
-}).catch(()=>{});
-function showPwd(){
-    document.getElementById('settingsPwd').style.display='block';
-    document.getElementById('settingsPwdConfirm').style.display='block';
-    document.getElementById('changePwdBtn').style.display='none';
-}
-function saveSettings(e){
-    e.preventDefault();
-    var p1=document.getElementById('settingsPwd').value.trim();
-    var p2=document.getElementById('settingsPwdConfirm').value.trim();
-    if(p1&&p1!==p2){return msg('两次密码不一致','err')}
-    var data={
-        INFLUX_URL:document.getElementById('influxUrl').value.trim(),
-        INFLUX_TOKEN:document.getElementById('influxToken').value.trim(),
-        INFLUX_ORG:document.getElementById('influxOrg').value.trim(),
-        INFLUX_BUCKET:document.getElementById('influxBucket').value.trim(),
-        INFLUX_TIMEOUT_MS:document.getElementById('influxTimeout').value.trim(),
-        APP_TOKEN:document.getElementById('appToken').value.trim(),
-    };
-    if(p1)data.SETTINGS_PASSWORD=p1;
-    fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
-    .then(r=>r.json()).then(d=>{
-        msg(d.ok?'保存成功，重启后生效':'保存失败: '+d.error, d.ok?'ok':'err');
-    }).catch(e=>msg('请求失败: '+e,'err'));
-}
-function msg(t,c){var m=document.getElementById('msg');m.textContent=t;m.className='msg '+c}
-</script>
-</body>
-</html>"""
+SETTINGS_HTML = _load_html_template("settings.html") or ""
 
 @app.route("/settings")
 def settings_page():
-    return render_template_string(SETTINGS_HTML)
+    return render_template_string(SETTINGS_HTML.replace("{{ app_token }}", APP_TOKEN or ""))
 
 @app.route("/api/settings/auth", methods=["POST"])
 def api_settings_auth():
@@ -5120,8 +2086,10 @@ if __name__ == "__main__":
     print(f"\n  DCS 数据分析平台已启动")
     print(f"  浏览器打开: http://localhost:{FLASK_PORT}")
     print(f"  实时监控:   http://localhost:{FLASK_PORT}/realtime")
+    print(f"  [DEBUG] SETTINGS_PASSWORD={repr(SETTINGS_PASSWORD)} APP_TOKEN={repr(APP_TOKEN)}")
     print(f"  趋势分析:   http://localhost:{FLASK_PORT}/trend")
     print(f"  作业分析:   http://localhost:{FLASK_PORT}/analysis")
+    print(f"  循环标注:   http://localhost:{FLASK_PORT}/labeling")
     print(f"  API 认证:   {'已启用 (APP_TOKEN)' if APP_TOKEN else '[WARN] 未启用 (仅内网安全)'}")
     print()
 
