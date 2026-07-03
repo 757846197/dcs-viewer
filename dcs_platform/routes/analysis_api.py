@@ -13,7 +13,9 @@ from flask import Blueprint, request, jsonify, send_file
 
 from dcs_platform.core.influx_client import fetch_timeseries, ping
 from dcs_platform.core.config import sanitize_param_for_flux
-from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, insert_cycle
+from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, insert_cycle, \
+    get_detect_configs, get_detect_config, get_default_detect_config, \
+    upsert_detect_config, toggle_detect_config, delete_detect_config
 from dcs_platform.services.group_service import (
     get_group_params, get_param_label, get_all_groups, get_group_by_id,
 )
@@ -39,6 +41,81 @@ def api_ping():
         "reachable": ok,
         "message": "InfluxDB 连接正常" if ok else "InfluxDB 无响应，请检查网络或 InfluxDB 服务状态"
     })
+
+
+# ===== 周期检测配置 CRUD =====
+
+@analysis_bp.route("/detect-configs")
+def api_detect_configs():
+    """GET /api/analysis/detect-configs?type=opening"""
+    cycle_type = request.args.get("type", "").strip() or None
+    configs = get_detect_configs(cycle_type=cycle_type)
+    return jsonify({"configs": configs, "count": len(configs)})
+
+
+@analysis_bp.route("/detect-configs/<int:config_id>")
+def api_get_detect_config(config_id):
+    config = get_detect_config(config_id)
+    if not config:
+        return jsonify({"error": "配置不存在"}), 404
+    return jsonify({"config": config})
+
+
+@analysis_bp.route("/detect-configs", methods=["POST"])
+def api_create_detect_config():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    cycle_type = data.get("cycle_type", "opening")
+    config_data = data.get("config", {})
+    description = data.get("description", "")
+    is_default = data.get("is_default", 0)
+    if not name:
+        return jsonify({"error": "名称不能为空"}), 400
+    config_id = upsert_detect_config(
+        None, name, cycle_type,
+        json.dumps(config_data, ensure_ascii=False),
+        description, is_default
+    )
+    return jsonify({"ok": True, "id": config_id})
+
+
+@analysis_bp.route("/detect-configs/<int:config_id>", methods=["PUT"])
+def api_update_detect_config(config_id):
+    data = request.get_json(silent=True) or {}
+    existing = get_detect_config(config_id)
+    if not existing:
+        return jsonify({"error": "配置不存在"}), 404
+    upsert_detect_config(
+        config_id,
+        data.get("name", existing["name"]),
+        data.get("cycle_type", existing["cycle_type"]),
+        json.dumps(data.get("config", existing["config"]), ensure_ascii=False),
+        data.get("description", existing.get("description", "")),
+        data.get("is_default", existing.get("is_default", 0))
+    )
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/detect-configs/<int:config_id>/toggle", methods=["POST"])
+def api_toggle_detect_config(config_id):
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled", 1)
+    toggle_detect_config(config_id, enabled)
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/detect-configs/<int:config_id>", methods=["DELETE"])
+def api_delete_detect_config(config_id):
+    delete_detect_config(config_id)
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/detect-configs/default")
+def api_default_detect_config():
+    """GET /api/analysis/detect-configs/default?type=opening"""
+    cycle_type = request.args.get("type", "opening")
+    config = get_default_detect_config(cycle_type)
+    return jsonify({"config": config})
 
 
 @analysis_bp.route("/equipment")
@@ -125,6 +202,7 @@ def api_cycles():
     end = request.args.get("end", "")
     cycle_type = request.args.get("type", "all")
     limit = int(request.args.get("limit", 200))
+    config_id = request.args.get("config_id", "")
     
     # Normalize time format: frontend sends "2026-07-03T00:00" (no seconds/Z)
     # Flux requires RFC3339: "2026-07-03T00:00:00Z"
@@ -155,37 +233,59 @@ def api_cycles():
     
     # ━━━ 开口检测: remote==1 AND swing_pos 穿越 90° ━━━
     if cycle_type in ("opening", "all"):
+        # 加载检测配置
+        opening_rules, opening_filter = _load_detect_rules("opening", config_id)
+        
         for machine, sig in OPENING_CONFIG.items():
-            # 只查检测必需的两个信号，加快速度
-            detect_params = [sig["remote"], sig["swing_pos"]]
+            # 用配置中的信号替代硬编码
+            remote_sig = sig["remote"]
+            swing_sig = sig["swing_pos"]
+            threshold = 90
+            tolerance = 2
+            
+            if opening_rules:
+                for rule in opening_rules:
+                    role = rule.get("role", "")
+                    val = rule.get("threshold", 90)
+                    tol = rule.get("tolerance_s", 2)
+                    sig_name = rule.get("signal", "")
+                    if role == "remote":
+                        remote_sig = sig_name
+                    elif role == "crossing":
+                        swing_sig = sig_name
+                        threshold = val
+                        tolerance = tol
+            
+            detect_params = [remote_sig, swing_sig]
             try:
                 data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
             except Exception:
                 continue
             
-            remote = _build_time_map(data.get(sig["remote"], []))
-            swing = sorted(data.get(sig["swing_pos"], []), key=lambda x: x[0])
+            remote = _build_time_map(data.get(remote_sig, []))
+            swing = sorted(data.get(swing_sig, []), key=lambda x: x[0])
             
             if len(swing) < 2 or len(remote) < 2:
                 continue
             
             in_cycle = False
             cycle_start = None
+            filter_min = opening_filter.get("filter_min_s", 30)
+            filter_max = opening_filter.get("filter_max_s", 3600)
+            
             for i in range(1, len(swing)):
                 prev_v, curr_v = swing[i-1][1], swing[i][1]
                 t = swing[i][0]
                 ts = t.timestamp()
                 
-                if not in_cycle and _crossed(prev_v, curr_v, 90):
-                    # 检查遥控信号 (±2s 容差)
-                    if _remote_nearby(remote, ts, tolerance=2):
+                if not in_cycle and _crossed(prev_v, curr_v, threshold):
+                    if _remote_nearby(remote, ts, tolerance=tolerance):
                         in_cycle = True
                         cycle_start = t
                     
-                elif in_cycle and _crossed(curr_v, prev_v, 90):
-                    # 回转退出 90° = 周期结束
+                elif in_cycle and _crossed(curr_v, prev_v, threshold):
                     duration = (t - cycle_start).total_seconds()
-                    if 30 <= duration <= 3600:
+                    if filter_min <= duration <= filter_max:
                         cycles.append({
                             "machine": machine, "type": "opening",
                             "trigger_time": cycle_start.isoformat(),
@@ -197,11 +297,10 @@ def api_cycles():
                     in_cycle = False
                     if len(cycles) >= limit: break
             
-            # 未闭合的周期（仍然在作业中）
             if in_cycle and swing:
                 last_t = swing[-1][0]
                 duration = (last_t - cycle_start).total_seconds()
-                if 30 <= duration <= 3600:
+                if filter_min <= duration <= filter_max:
                     cycles.append({
                         "machine": machine, "type": "opening",
                         "trigger_time": cycle_start.isoformat(),
@@ -294,6 +393,30 @@ def api_cycles():
         "count": len(cycles),
         "saved_to_db": saved_count
     })
+
+
+def _load_detect_rules(cycle_type, config_id=""):
+    """从数据库加载检测规则配置。
+    Returns: (rules_list, filter_config)
+    """
+    rules = []
+    filter_cfg = {"filter_min_s": 30, "filter_max_s": 3600}
+    
+    if config_id:
+        try:
+            config = get_detect_config(int(config_id))
+        except (ValueError, TypeError):
+            config = None
+    else:
+        config = get_default_detect_config(cycle_type)
+    
+    if config and config.get("enabled"):
+        cfg = config.get("config", {})
+        rules = cfg.get("rules", [])
+        filter_cfg["filter_min_s"] = cfg.get("filter_min_s", 30)
+        filter_cfg["filter_max_s"] = cfg.get("filter_max_s", 3600)
+    
+    return rules, filter_cfg
 
 
 def _normalize_time(time_str):

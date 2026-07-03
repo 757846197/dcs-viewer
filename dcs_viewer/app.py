@@ -2036,6 +2036,15 @@ def report():
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
+@app.route("/detect-config")
+@login_required
+def detect_config():
+    html = _load_html_template("detect_config.html") or ""
+    html = html.replace("{{ app_token }}", APP_TOKEN or "")
+    resp = make_response(render_template_string(html))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
 @app.route("/analysis")
 @login_required
 def analysis():

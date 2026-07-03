@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>检测规则配置 — DCS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744,#243356,#2d3f66);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.sidebar-header .version{font-size:10px;opacity:.4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700;background:linear-gradient(135deg,#1a1a2e,#1677ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500;transition:all .2s}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.container{padding:24px 32px}
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}
+.card-body{padding:24px}
+.form-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end}
+.form-group{display:flex;flex-direction:column;gap:5px;flex:1;min-width:150px}
+.form-group label{font-size:11px;color:#64748b;font-weight:600}
+.form-group input,.form-group select,.form-group textarea{padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;background:#fff;color:#1f2937;font-family:inherit}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.btn{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600;transition:all .25s;white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.btn-primary:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
+.btn-success{background:linear-gradient(135deg,#52c41a,#389e0d);color:#fff}
+.btn-danger{background:#fff;border:1px solid #fecaca;color:#dc2626}
+.btn-danger:hover{background:#fef2f2}
+.btn-sm{padding:4px 12px;font-size:11px}
+.btn-ghost{padding:4px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b}
+.btn-ghost:hover{border-color:#1677ff;color:#1677ff}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#f8fafc;font-weight:600;text-align:left;padding:10px 12px;color:#64748b;font-size:11px;border-bottom:1px solid #f1f5f9}
+td{padding:10px 12px;border-bottom:1px solid #f1f5f9}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.tag-ok{background:#f0fdf4;color:#166534}
+.tag-off{background:#f1f5f9;color:#94a3b8}
+.alert{padding:12px 20px;border-radius:12px;margin-bottom:16px;font-size:13px;display:none}
+.alert-info{display:block;background:#eff6ff;border:1px solid #bfdbfe;color:#2563eb}
+.alert-error{display:block;background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert-ok{display:block;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+.rule-item{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-bottom:6px;flex-wrap:wrap}
+.rule-item span{font-size:12px;color:#64748b}
+.rule-item strong{font-size:12px}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,0.2);width:550px;max-width:95vw;max-height:85vh;overflow-y:auto}
+.modal .modal-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center}
+.modal .modal-body{padding:24px}
+.modal .modal-footer{padding:16px 24px;border-top:1px solid #f1f5f9;display:flex;gap:8px;justify-content:flex-end}
+@media(max-width:768px){.sidebar{width:60px;min-width:60px}.sidebar .nav-item span{display:none}.main{margin-left:60px}}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header"><h2>DCS 分析平台</h2><div class="version">检测规则配置</div></div>
+    <a class="nav-item" href="/">历史查询</a>
+    <a class="nav-item" href="/analysis">作业分析</a>
+    <a class="nav-item" href="/labeling">循环标注</a>
+    <a class="nav-item active" href="/detect-config">检测规则</a>
+    <a class="nav-item" href="/rules/opening">开口规则</a>
+    <a class="nav-item" href="/rules/plugging">堵口规则</a>
+</div>
+
+<div class="main">
+    <div class="header">
+        <h1>周期检测规则配置</h1>
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/detect-config" class="active">检测规则</a>
+            <a href="/knowledge-base">知识库</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alertBox" class="alert"></div>
+
+        <div class="card">
+            <div class="card-header">
+                检测配置列表
+                <button class="btn btn-primary" style="margin-left:auto" onclick="openAddConfig()">+ 新建配置</button>
+            </div>
+            <div class="card-body">
+                <table id="configTable">
+                    <thead><tr><th>名称</th><th>类型</th><th>规则数</th><th>默认</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+                    <tbody id="configBody"><tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal">
+        <div class="modal-header"><span id="modalTitle">新建配置</span><button class="btn-ghost" style="margin-left:auto" onclick="closeModal()">x</button></div>
+        <div class="modal-body">
+            <div class="form-row">
+                <div class="form-group"><label>配置名称</label><input id="cfgName" placeholder="例: 高炉7号开口检测"></div>
+                <div class="form-group" style="flex:0 0 160px"><label>作业类型</label>
+                    <select id="cfgType"><option value="opening">开口</option><option value="plugging">堵口</option></select>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:16px"><label>描述</label><input id="cfgDesc" placeholder="可选"></div>
+
+            <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px">检测规则 <button class="btn btn-sm btn-primary" onclick="addRule()">+ 添加规则</button></div>
+            <div id="rulesList" style="max-height:300px;overflow-y:auto"></div>
+
+            <div class="form-row" style="margin-top:12px">
+                <div class="form-group" style="flex:0 0 100px"><label>最短时长(s)</label><input id="cfgMinS" type="number" value="30"></div>
+                <div class="form-group" style="flex:0 0 100px"><label>最长时长(s)</label><input id="cfgMaxS" type="number" value="3600"></div>
+            </div>
+
+            <div class="form-group" style="margin-top:8px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="cfgIsDefault"> 设为默认配置
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" id="btnSaveCfg" onclick="saveConfig()">保存</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var editingConfigId = null;
+var configs = [];
+var currentRules = [];
+
+function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textContent=msg;el.className='alert alert-'+cls;setTimeout(function(){el.className='alert'},4000)}
+function _api(url, opts){if(!opts)opts={};url+=(url.includes('?')?'&':'?')+'token='+APP_TOKEN;return fetch(url,opts).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})}
+
+// 加载列表
+function loadConfigs(){
+    _api('/api/analysis/detect-configs').then(function(d){
+        configs = d.configs || [];
+        renderTable();
+    }).catch(function(e){showAlert('加载失败: '+e.message,'error')});
+}
+
+function renderTable(){
+    var html = '';
+    configs.forEach(function(c){
+        var rules = (c.config && c.config.rules) ? c.config.rules.length : 0;
+        var typeLabel = c.cycle_type === 'opening' ? '开口' : (c.cycle_type === 'plugging' ? '堵口' : '全部');
+        html += '<tr>';
+        html += '<td><strong>'+c.name+'</strong>'+(c.description?'<br><span style="font-size:10px;color:#94a3b8">'+c.description+'</span>':'')+'</td>';
+        html += '<td>'+typeLabel+'</td>';
+        html += '<td>'+rules+' 条</td>';
+        html += '<td>'+(c.is_default?'<span class="tag tag-ok">默认</span>':'<span class="tag tag-off">否</span>')+'</td>';
+        html += '<td>'+(c.enabled?'<span class="tag tag-ok">启用</span>':'<span class="tag tag-off">停用</span>')+'</td>';
+        html += '<td style="font-size:11px;color:#94a3b8">'+(c.updated_at||c.created_at||'--')+'</td>';
+        html += '<td>';
+        html += '<button class="btn-ghost" onclick="openEditConfig('+c.id+')">编辑</button> ';
+        html += '<button class="btn-ghost" onclick="copyConfig('+c.id+')">复制</button> ';
+        html += '<button class="btn-ghost" style="color:#dc2626" onclick="deleteConfig('+c.id+')">删除</button>';
+        html += '</td></tr>';
+    });
+    document.getElementById('configBody').innerHTML = html || '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px">暂无配置</td></tr>';
+}
+
+// 打开新建
+function openAddConfig(){
+    editingConfigId = null;
+    document.getElementById('modalTitle').textContent = '新建检测配置';
+    document.getElementById('cfgName').value = '';
+    document.getElementById('cfgType').value = 'opening';
+    document.getElementById('cfgDesc').value = '';
+    document.getElementById('cfgMinS').value = '30';
+    document.getElementById('cfgMaxS').value = '3600';
+    document.getElementById('cfgIsDefault').checked = false;
+    currentRules = [
+        {signal:'LT_LQFC_57',role:'remote',label:'遥控选择'},
+        {signal:'LT_LQFC_63',role:'crossing',label:'回转位置',threshold:90,tolerance_s:2}
+    ];
+    renderRules();
+    document.getElementById('editModal').classList.add('show');
+}
+
+// 打开编辑
+function openEditConfig(id){
+    var c = configs.find(function(x){return x.id===id});
+    if(!c) return;
+    editingConfigId = id;
+    document.getElementById('modalTitle').textContent = '编辑检测配置';
+    document.getElementById('cfgName').value = c.name || '';
+    document.getElementById('cfgType').value = c.cycle_type || 'opening';
+    document.getElementById('cfgDesc').value = c.description || '';
+    document.getElementById('cfgIsDefault').checked = !!c.is_default;
+    var cfg = c.config || {};
+    document.getElementById('cfgMinS').value = cfg.filter_min_s || 30;
+    document.getElementById('cfgMaxS').value = cfg.filter_max_s || 3600;
+    currentRules = JSON.parse(JSON.stringify(cfg.rules || []));
+    renderRules();
+    document.getElementById('editModal').classList.add('show');
+}
+
+// 复制
+function copyConfig(id){
+    var c = configs.find(function(x){return x.id===id});
+    if(!c) return;
+    var cfg = JSON.parse(JSON.stringify(c.config || {}));
+    _api('/api/analysis/detect-configs',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:c.name+' (副本)',cycle_type:c.cycle_type,config:cfg,description:c.description})
+    }).then(function(){loadConfigs();showAlert('已复制','ok')}).catch(function(e){showAlert('复制失败: '+e.message,'error')});
+}
+
+function closeModal(){document.getElementById('editModal').classList.remove('show')}
+
+// 保存配置
+function saveConfig(){
+    var name = document.getElementById('cfgName').value.trim();
+    if(!name){showAlert('请输入配置名称','error');return}
+    var cfg = {
+        rules: currentRules,
+        filter_min_s: parseInt(document.getElementById('cfgMinS').value)||30,
+        filter_max_s: parseInt(document.getElementById('cfgMaxS').value)||3600
+    };
+    var body = {
+        name: name,
+        cycle_type: document.getElementById('cfgType').value,
+        description: document.getElementById('cfgDesc').value.trim(),
+        config: cfg,
+        is_default: document.getElementById('cfgIsDefault').checked?1:0
+    };
+    var url = editingConfigId ? '/api/analysis/detect-configs/'+editingConfigId : '/api/analysis/detect-configs';
+    var method = editingConfigId ? 'PUT' : 'POST';
+    _api(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+        .then(function(){closeModal();loadConfigs();showAlert('保存成功','ok')})
+        .catch(function(e){showAlert('保存失败: '+e.message,'error')});
+}
+
+function deleteConfig(id){
+    if(!confirm('确认删除？')) return;
+    _api('/api/analysis/detect-configs/'+id,{method:'DELETE'})
+        .then(function(){loadConfigs();showAlert('已删除','ok')})
+        .catch(function(e){showAlert('删除失败: '+e.message,'error')});
+}
+
+// 规则管理
+function addRule(){
+    currentRules.push({signal:'',role:'remote',label:''});
+    renderRules();
+}
+
+function removeRule(idx){
+    currentRules.splice(idx,1);
+    renderRules();
+}
+
+function updateRule(idx, field, value){
+    currentRules[idx][field] = value;
+    if(field==='threshold') currentRules[idx].threshold = parseFloat(value)||0;
+    if(field==='tolerance_s') currentRules[idx].tolerance_s = parseInt(value)||2;
+}
+
+function renderRules(){
+    var html = '';
+    currentRules.forEach(function(r,i){
+        html += '<div class="rule-item">';
+        html += '<span style="width:20px">#'+(i+1)+'</span>';
+        html += '<div class="form-group" style="flex:1;min-width:130px"><label>信号参数</label><input value="'+r.signal+'" placeholder="LT_LQFC_57" onchange="updateRule('+i+',\'signal\',this.value)"></div>';
+        html += '<div class="form-group" style="flex:0 0 110px"><label>角色</label><select onchange="updateRule('+i+',\'role\',this.value)">';
+        html += '<option value="remote" '+(r.role==='remote'?'selected':'')+'>遥控信号</option>';
+        html += '<option value="crossing" '+(r.role==='crossing'?'selected':'')+'>穿越阈值</option>';
+        html += '<option value="edge" '+(r.role==='edge'?'selected':'')+'>边沿检测</option>';
+        html += '</select></div>';
+        if(r.role === 'crossing'){
+            html += '<div class="form-group" style="flex:0 0 80px"><label>阈值</label><input type="number" value="'+(r.threshold||90)+'" onchange="updateRule('+i+',\'threshold\',this.value)"></div>';
+            html += '<div class="form-group" style="flex:0 0 80px"><label>容差(s)</label><input type="number" value="'+(r.tolerance_s||2)+'" onchange="updateRule('+i+',\'tolerance_s\',this.value)"></div>';
+        }
+        if(r.role === 'edge'){
+            html += '<div class="form-group" style="flex:0 0 90px"><label>方向</label><select onchange="updateRule('+i+',\'edge_dir\',this.value)"><option value="rising" '+(r.edge_dir&&r.edge_dir!=='falling'?'selected':'')+'>上升沿</option><option value="falling" '+(r.edge_dir==='falling'?'selected':'')+'>下降沿</option></select></div>';
+        }
+        html += '<div class="form-group" style="flex:0 0 60px"><label>标签</label><input value="'+(r.label||'')+'" placeholder="说明" onchange="updateRule('+i+',\'label\',this.value)"></div>';
+        html += '<button class="btn-ghost" style="color:#dc2626;margin-top:16px" onclick="removeRule('+i+')">x</button>';
+        html += '</div>';
+    });
+    if(currentRules.length===0) html = '<div style="text-align:center;color:#94a3b8;padding:12px">暂无规则，点击「+ 添加规则」</div>';
+    document.getElementById('rulesList').innerHTML = html;
+}
+
+loadConfigs();
+</script>
+</body>
+</html>
