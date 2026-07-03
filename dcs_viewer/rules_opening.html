@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>开口规则配置 — DCS</title>
+<script src="/static/lib/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744,#2d3f66);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.sidebar-header .version{font-size:10px;opacity:0.4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:600;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none;transition:all 0.2s}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
+.nav-section-title{padding:6px 20px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.3);font-weight:600}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700}
+.header .badge{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff;font-size:10px;padding:2px 10px;border-radius:12px}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500;transition:all 0.2s}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.container{padding:24px 32px}
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:space-between;color:#0f172a}
+.card-body{padding:24px}
+.btn{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600;transition:all 0.25s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.btn-primary:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
+.btn-danger{background:linear-gradient(135deg,#ff4d4f,#cf1322);color:#fff}
+.btn-danger:hover{background:linear-gradient(135deg,#ff7875,#ff4d4f)}
+.btn-success{background:linear-gradient(135deg,#52c41a,#389e0d);color:#fff}
+.btn-ghost{padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b;font-weight:500}
+.btn-ghost:hover{border-color:#1677ff;color:#1677ff;background:#f0f5ff}
+.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;display:inline-block}
+.tag-ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.tag-warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.alert{padding:12px 20px;border-radius:12px;margin-bottom:16px;font-size:13px;display:none}
+.alert-info{display:block;background:#eff6ff;border:1px solid #bfdbfe;color:#2563eb}
+.alert-error{display:block;background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert-success{display:block;background:#f0fdf4;border:1px solid:#bbf7d0;color:#166534}
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:1000;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:16px;width:640px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.modal-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center}
+.modal-header h3{font-size:16px;font-weight:700}
+.modal-body{padding:24px}
+.modal-footer{padding:16px 24px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:12px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:5px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;font-family:inherit}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.rule-row{display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;padding:10px;background:#f8fafc;border-radius:8px;flex-wrap:wrap}
+.rule-row .form-group{margin-bottom:0;min-width:100px}
+.rule-row .form-group.param{flex:2;min-width:140px}
+.rule-row .form-group.op{flex:0;min-width:90px}
+.rule-row .form-group.val{flex:1;min-width:80px}
+.rule-row .form-group.dur{flex:0;min-width:70px}
+.logic-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:#e8f4fd;color:#1677ff;border-radius:12px;font-size:11px;font-weight:700;margin:4px 0}
+.toggle-switch{position:relative;width:44px;height:24px;display:inline-block}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;top:0;left:0;right:0;bottom:0;background:#cbd5e1;border-radius:24px;cursor:pointer;transition:0.3s}
+.toggle-slider:before{content:"";position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:0.3s}
+input:checked+.toggle-slider{background:#1677ff}
+input:checked+.toggle-slider:before{transform:translateX(20px)}
+.loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:9999;justify-content:center;align-items:center}
+.loading-overlay.show{display:flex}
+.spinner{width:36px;height:36px;border:3px solid #e2e8f0;border-top:3px solid #1677ff;border-radius:50%;animation:spin 0.7s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-box{background:#fff;padding:32px 48px;border-radius:16px;text-align:center}
+@media(max-width:768px){.sidebar{width:60px;min-width:60px}.sidebar .nav-item span,.sidebar .nav-section-title{display:none}.main{margin-left:60px}}
+</style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="sidebar-header"><h2>DCS 分析平台</h2><div class="version">开口规则配置</div></div>
+    <div class="nav-section-title" style="padding-top:12px">页面导航</div>
+    <a class="nav-item" href="/">历史查询</a>
+    <a class="nav-item" href="/analysis">作业分析</a>
+    <a class="nav-item active" href="/rules/opening">开口规则</a>
+    <a class="nav-item" href="/rules/plugging">堵口规则</a>
+    <a class="nav-item" href="/knowledge-base">知识库</a>
+</div>
+<div class="main">
+    <div class="header">
+        <h1>🔧 开口作业 — 专家规则配置</h1>
+        <span class="badge">Opening Rules</span>
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening" class="active">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base">知识库</a>
+        </div>
+    </div>
+    <div class="container">
+        <div id="alertBox" class="alert"></div>
+        <div class="card">
+            <div class="card-header">
+                <span>规则组列表 — 开口作业</span>
+                <button class="btn btn-primary" onclick="openCreateModal()">+ 新建规则组</button>
+            </div>
+            <div class="card-body" id="ruleGroupList">
+                <div style="text-align:center;padding:40px;color:#94a3b8">加载中...</div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-overlay" id="ruleModal">
+    <div class="modal">
+        <div class="modal-header"><h3 id="modalTitle">新建规则组</h3><button class="btn-ghost" onclick="closeModal()">✕</button></div>
+        <div class="modal-body">
+            <div class="form-group"><label>规则组名称</label><input id="groupName" placeholder="如: 超压检测"></div>
+            <div class="form-group"><label>描述</label><textarea id="groupDesc" rows="2" placeholder="说明此规则组的用途"></textarea></div>
+            <div class="form-group"><label>逻辑关系</label>
+                <select id="groupLogic"><option value="AND">AND — 所有条件均满足才触发</option><option value="OR">OR — 任意条件满足即触发</option></select>
+            </div>
+            <div class="form-group"><label>优先级 (数字越大越优先)</label><input id="groupPriority" type="number" value="0"></div>
+            <hr style="margin:16px 0;border-color:#f1f5f9">
+            <label style="font-size:12px;color:#64748b;font-weight:600">条件列表</label>
+            <div id="conditionList"></div>
+            <button class="btn btn-ghost" onclick="addCondition()" style="margin-top:8px">+ 添加条件</button>
+            <div id="logicPreview" style="margin-top:8px"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveRuleGroup()">保存规则组</button>
+        </div>
+    </div>
+</div>
+<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div id="loadingMsg" style="font-size:13px;color:#64748b">加载中...</div></div></div>
+<script>
+var APP_TOKEN="{{ app_token }}";
+var CYCLE_TYPE="opening";
+var OPENING_PARAMS=[
+    {id:"LT_LQFC_68",label:"推进进油压力",unit:"MPa",dim:"push"},
+    {id:"LT_LQFC_85",label:"推进回油压力",unit:"MPa",dim:"push"},
+    {id:"LT_LQFC_67",label:"开口小车位移",unit:"mm",dim:"push"},
+    {id:"LT_LQFC_64",label:"回转进油压力",unit:"MPa",dim:"swing"},
+    {id:"LT_LQFC_74",label:"回转回油压力",unit:"MPa",dim:"swing"},
+    {id:"LT_LQFC_63",label:"大臂旋转角",unit:"°",dim:"swing"},
+    {id:"LT_LQFC_88",label:"冲击进油压力",unit:"MPa",dim:"impact"},
+    {id:"LT_LQFC_89",label:"冲击回油压力",unit:"MPa",dim:"impact"},
+    {id:"LT_LQFC_66",label:"倾动进油压力",unit:"MPa",dim:"tilt"},
+    {id:"LT_LQFC_75",label:"倾动回油压力",unit:"MPa",dim:"tilt"},
+    {id:"LT_LQFC_87",label:"转钎进油压力",unit:"MPa",dim:"drill"},
+    {id:"LT_LQFC_86",label:"转钎回油压力",unit:"MPa",dim:"drill"},
+    {id:"LT_LQFC_151",label:"液压站压力",unit:"MPa",dim:"hydraulic"},
+    {id:"LT_LQFC_150",label:"液压站温度",unit:"°C",dim:"hydraulic"}
+];
+var OPERATORS=[
+    {id:"gt",label:"大于 (>)"},
+    {id:"lt",label:"小于 (<)"},
+    {id:"gte",label:"大于等于 (≥)"},
+    {id:"lte",label:"小于等于 (≤)"},
+    {id:"eq",label:"等于 (=)"},
+    {id:"between",label:"在范围内"},
+    {id:"change_rate_gt",label:"变化率 >"},
+    {id:"change_rate_lt",label:"变化率 <"}
+];
+var editingGroupId=null;
+var ruleGroups=[];
+
+function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':pid}
+function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textContent=msg;el.className='alert alert-'+cls;setTimeout(function(){el.className='alert';el.textContent=''},5000)}
+function showLoading(msg){document.getElementById('loadingMsg').textContent=msg||'加载中...';document.getElementById('loading').classList.add('show')}
+function hideLoading(){document.getElementById('loading').classList.remove('show')}
+
+function loadRuleGroups(){
+    console.log("loadRuleGroups called, CYCLE_TYPE="+CYCLE_TYPE);
+    showLoading('加载规则...');
+    fetch('/api/rules?cycle_type='+CYCLE_TYPE+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
+        console.log("API response:",data); ruleGroups=data.groups||[]; console.log("loaded "+ruleGroups.length+" groups");
+        renderRuleGroups();
+        hideLoading();
+    }).catch(function(e){showAlert('加载失败: '+e.message,'error');hideLoading()})
+}
+
+function renderRuleGroups(){
+    var el=document.getElementById('ruleGroupList');
+    if(ruleGroups.length===0){el.innerHTML='<div style="text-align:center;padding:40px;color:#94a3b8"><h3>暂无规则组</h3><p>点击「新建规则组」添加第一条规则</p></div>';return}
+    var html='';
+    ruleGroups.forEach(function(g){
+        var tagCls=g.enabled?'tag-ok':'tag-warn';
+        var statusText=g.enabled?'已启用':'已禁用';
+        html+='<div class="card" style="border:1px solid '+(g.enabled?'#bbf7d0':'#fde68a')+'">';
+        html+='<div class="card-header">';
+        html+='<div><span style="font-size:15px">'+escHtml(g.name)+'</span>';
+        html+=' <span class="tag '+tagCls+'">'+statusText+'</span>';
+        html+=' <span style="font-size:11px;color:#94a3b8">优先级: '+g.priority+' | 逻辑: '+g.logic_op+'</span></div>';
+        html+='<div style="display:flex;gap:8px;align-items:center">';
+        html+='<label class="toggle-switch"><input type="checkbox" '+(g.enabled?'checked':'')+' onchange="toggleGroup('+g.id+',this.checked)"><span class="toggle-slider"></span></label>';
+        html+='<button class="btn-ghost" onclick="openEditModal('+g.id+')">编辑</button>';
+        html+='<button class="btn-ghost" style="color:#ff4d4f;border-color:#fecaca" onclick="deleteGroup('+g.id+')">删除</button>';
+        html+='</div></div>';
+        if(g.rules&&g.rules.length>0){
+            html+='<div class="card-body" style="padding:12px 24px">';
+            html+='<div style="font-size:11px;color:#64748b;margin-bottom:8px">条件链:</div>';
+            g.rules.forEach(function(r,i){
+                if(i>0)html+='<span class="logic-badge">'+g.logic_op+'</span>';
+                html+='<span style="display:inline-block;padding:6px 12px;background:#f0f5ff;border-radius:8px;font-size:12px;margin:2px">';
+                html+=getParamLabel(r.param_name)+' <b>'+r.operator+'</b> '+r.threshold_value;
+                if(r.operator==='between')html+=' ~ '+r.threshold_value2;
+                if(r.duration_s>0)html+=' <span style="color:#faad14">持续≥'+r.duration_s+'s</span>';
+                html+='</span>';
+            });
+            html+='</div>';
+        }
+        html+='</div>';
+    });
+    el.innerHTML=html
+}
+
+function openCreateModal(){editingGroupId=null;document.getElementById('modalTitle').textContent='新建规则组';document.getElementById('groupName').value='';document.getElementById('groupDesc').value='';document.getElementById('groupLogic').value='AND';document.getElementById('groupPriority').value=0;document.getElementById('conditionList').innerHTML='';addCondition();document.getElementById('ruleModal').classList.add('show')}
+
+function openEditModal(gid){var g=ruleGroups.find(function(x){return x.id===gid});if(!g)return;editingGroupId=gid;document.getElementById('modalTitle').textContent='编辑: '+g.name;document.getElementById('groupName').value=g.name;document.getElementById('groupDesc').value=g.description||'';document.getElementById('groupLogic').value=g.logic_op||'AND';document.getElementById('groupPriority').value=g.priority||0;var cl=document.getElementById('conditionList');cl.innerHTML='';if(g.rules&&g.rules.length>0){g.rules.forEach(function(r){addCondition(r)})}else{addCondition()}document.getElementById('ruleModal').classList.add('show')}
+
+function closeModal(){document.getElementById('ruleModal').classList.remove('show')}
+
+function addCondition(data){
+    var cl=document.getElementById('conditionList');
+    var idx=cl.children.length;
+    var div=document.createElement('div');div.className='rule-row';
+    var paramOpts=OPENING_PARAMS.map(function(p){return '<option value="'+p.id+'">'+p.label+' ('+p.unit+')</option>'}).join('');
+    var opOpts=OPERATORS.map(function(o){return '<option value="'+o.id+'">'+o.label+'</option>'}).join('');
+    div.innerHTML=
+        '<div class="form-group param"><label>参数</label><select class="cond-param">'+paramOpts+'</select></div>'+
+        '<div class="form-group op"><label>运算符</label><select class="cond-op">'+opOpts+'</select></div>'+
+        '<div class="form-group val"><label>阈值</label><input class="cond-val" type="number" step="0.1" value="0"></div>'+
+        '<div class="form-group val" style="display:none"><label>阈值2</label><input class="cond-val2" type="number" step="0.1"></div>'+
+        '<div class="form-group dur"><label>持续(s)</label><input class="cond-dur" type="number" step="0.1" value="0" min="0"></div>'+
+        '<button class="btn-ghost" style="color:#ff4d4f;align-self:center" onclick="this.parentElement.remove();updateLogicPreview()">✕</button>';
+    cl.appendChild(div);
+    if(data){div.querySelector('.cond-param').value=data.param_name||'';div.querySelector('.cond-op').value=data.operator||'gt';div.querySelector('.cond-val').value=data.threshold_value||0;if(data.threshold_value2!=null){div.querySelector('.cond-val2').value=data.threshold_value2}div.querySelector('.cond-dur').value=data.duration_s||0}
+    var opSel=div.querySelector('.cond-op');
+    opSel.addEventListener('change',function(){var v2=div.querySelector('.cond-val2');v2.parentElement.style.display=this.value==='between'?'':'none';updateLogicPreview()});
+    if(data&&data.operator==='between'){div.querySelector('.cond-val2').parentElement.style.display=''}
+    updateLogicPreview()
+}
+
+function updateLogicPreview(){
+    var rows=document.querySelectorAll('#conditionList .rule-row');
+    var logic=document.getElementById('groupLogic').value;
+    var preview=document.getElementById('logicPreview');
+    if(rows.length<=1){preview.innerHTML='';return}
+    var parts=[];
+    rows.forEach(function(r,i){var p=r.querySelector('.cond-param');parts.push(p?p.options[p.selectedIndex].text:'?')});
+    preview.innerHTML='<span style="font-size:12px;color:#64748b">逻辑链: </span>'+parts.join(' <span class="logic-badge">'+logic+'</span> ')
+}
+
+function collectConditions(){
+    var rows=document.querySelectorAll('#conditionList .rule-row');
+    var conds=[];
+    rows.forEach(function(r){
+        conds.push({
+            param_name:r.querySelector('.cond-param').value,
+            operator:r.querySelector('.cond-op').value,
+            threshold_value:parseFloat(r.querySelector('.cond-val').value)||0,
+            threshold_value2:r.querySelector('.cond-op').value==='between'?(parseFloat(r.querySelector('.cond-val2').value)||0):null,
+            duration_s:parseFloat(r.querySelector('.cond-dur').value)||0
+        })
+    });
+    return conds
+}
+
+function saveRuleGroup(){
+    var name=document.getElementById('groupName').value.trim();
+    if(!name){showAlert('请输入规则组名称','error');return}
+    var conds=collectConditions();
+    if(conds.length===0){showAlert('至少需要一条条件','error');return}
+    showLoading('保存中...');
+    var payload={cycle_type:CYCLE_TYPE,name:name,description:document.getElementById('groupDesc').value,logic_op:document.getElementById('groupLogic').value,priority:parseInt(document.getElementById('groupPriority').value)||0,rules:conds};
+    var method='POST',url='/api/rules?token='+APP_TOKEN;
+    if(editingGroupId){method='PUT';url='/api/rules/'+editingGroupId+'?token='+APP_TOKEN}
+    fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(d){
+        if(d.error){showAlert(d.error,'error')}else{closeModal();loadRuleGroups();showAlert('保存成功','success')}
+        hideLoading()
+    }).catch(function(e){showAlert('保存失败: '+e.message,'error');hideLoading()})
+}
+
+function toggleGroup(gid,enabled){
+    fetch('/api/rules/'+gid+'/toggle?token='+APP_TOKEN,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled?1:0})}).then(function(r){return r.json()}).then(function(d){
+        if(d.error)showAlert(d.error,'error');else loadRuleGroups()
+    })
+}
+
+function deleteGroup(gid){
+    if(!confirm('确定删除此规则组？此操作不可撤销。'))return;
+    fetch('/api/rules/'+gid+'?token='+APP_TOKEN,{method:'DELETE'}).then(function(r){return r.json()}).then(function(d){
+        if(d.error)showAlert(d.error,'error');else{loadRuleGroups();showAlert('已删除','success')}
+    })
+}
+
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+loadRuleGroups();
+</script>
+</body>
+</html>

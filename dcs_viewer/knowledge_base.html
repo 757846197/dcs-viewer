@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库管理 — DCS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744,#2d3f66);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.sidebar-header .version{font-size:10px;opacity:0.4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:600;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none;transition:all 0.2s}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
+.nav-section-title{padding:6px 20px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.3);font-weight:600}
+.sidebar-footer{margin-top:auto;padding:14px 20px;font-size:11px;border-top:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.35)}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:#1677ff;color:#fff}
+.container{padding:24px 32px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:20px}
+.stat-card{background:#fff;border-radius:12px;padding:20px 24px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.stat-card .label{font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase}
+.stat-card .value{font-size:28px;font-weight:700;color:#0f172a;margin-top:4px}
+.card{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.04);margin-bottom:16px;overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}
+.card-body{padding:24px}
+.filter-bar{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.filter-group{display:flex;flex-direction:column;gap:4px}
+.filter-group label{font-size:11px;color:#64748b;font-weight:600}
+.filter-group select,.filter-group input{padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none}
+.filter-group select:focus,.filter-group input:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.btn{padding:8px 20px;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:600;transition:all 0.2s}
+.btn-primary{background:#1677ff;color:#fff}
+.btn-primary:hover{background:#0958d9}
+.btn-ghost{padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b}
+.btn-ghost:hover{border-color:#1677ff;color:#1677ff}
+.btn-danger{color:#dc2626;border-color:#fecaca}
+.btn-danger:hover{background:#fef2f2;border-color:#dc2626}
+.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;display:inline-block;margin:1px 2px}
+.tag-exemplary{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.tag-typical{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}
+.tag-edge{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.tag-anomaly{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+.tag-opening{background:#eff6ff;color:#1677ff}
+.tag-plugging{background:#fefce8;color:#a16207}
+.stars{color:#faad14;font-size:14px;letter-spacing:2px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#f8fafc;font-weight:600;text-align:left;padding:10px 12px;color:#64748b;font-size:11px;border-bottom:1px solid #f1f5f9}
+td{padding:8px 12px;border-bottom:1px solid #f1f5f9}
+tr:hover{background:#f8fafc}
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:500;justify-content:center;align-items:center}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;padding:24px;width:600px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.modal h3{font-size:16px;margin-bottom:16px}
+.modal .form-group{margin-bottom:12px}
+.modal .form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:4px}
+.modal .form-group input,.modal .form-group select,.modal .form-group textarea{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px}
+.modal .form-group textarea{min-height:80px;resize:vertical}
+.modal .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.loading-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:999;justify-content:center;align-items:center}
+.loading-overlay.show{display:flex}
+.loading-box{background:#fff;padding:32px 48px;border-radius:16px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.spinner{width:36px;height:36px;border:3px solid #e2e8f0;border-top:3px solid #1677ff;border-radius:50%;animation:spin 0.7s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<div class="sidebar-header"><h2>DCS 分析平台</h2><div class="version">知识库管理</div></div>
+<div class="nav-section-title" style="padding:12px 20px 6px">导航</div>
+<a class="nav-item" href="/">历史查询</a>
+<a class="nav-item" href="/analysis">作业分析</a>
+<a class="nav-item" href="/rules/opening">开口规则</a>
+<a class="nav-item" href="/rules/plugging">堵口规则</a>
+<a class="nav-item active" href="/knowledge-base">知识库</a>
+<div class="sidebar-footer"><span style="color:#52c41a">●</span> 已连接</div>
+</div>
+<div class="main">
+<div class="header"><h1>成功案例知识库</h1>
+<div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base" class="active">知识库</a>
+        </div></div>
+<div class="container">
+<div class="stats-row" id="statsRow"></div>
+<div class="card"><div class="card-header">筛选</div><div class="card-body">
+<div class="filter-bar">
+<div class="filter-group"><label>作业类型</label><select id="fCycleType"><option value="">全部</option><option value="opening">开口</option><option value="plugging">堵口</option></select></div>
+<div class="filter-group"><label>状态</label><select id="fStatus"><option value="">全部</option><option value="exemplary">典范</option><option value="typical">典型</option><option value="edge_case">边界</option><option value="anomaly">异常</option></select></div>
+<div class="filter-group"><label>标签</label><input id="fTags" placeholder="多个标签逗号分隔" style="width:200px"></div>
+<div class="filter-group"><label>&nbsp;</label><button class="btn btn-primary" onclick="loadEntries()">查询</button></div>
+<div class="filter-group" style="margin-left:auto"><label>&nbsp;</label><button class="btn btn-primary" onclick="openAddWizard()" style="background:#52c41a">+ 手动收录</button></div>
+</div></div></div>
+<div class="card"><div class="card-header">案例列表 <span id="entryCount" style="font-size:11px;color:#94a3b8"></span></div>
+<div class="card-body" style="overflow-x:auto">
+<table id="entryTable"><thead><tr><th>ID</th><th>设备</th><th>类型</th><th>标题</th><th>时间</th><th>标签</th><th>评分</th><th>操作</th></tr></thead>
+<tbody id="entryBody"><tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:32px">点击「查询」加载</td></tr></tbody>
+</table></div></div>
+</div></div>
+<div class="loading-overlay" id="loading"><div class="loading-box"><div class="spinner"></div><div>加载中...</div></div></div>
+<div class="modal-overlay" id="editModal"><div class="modal">
+<h3 id="modalTitle">编辑案例</h3>
+<div class="form-group"><label>标题</label><input id="mTitle"></div>
+<div class="form-group"><label>标签（逗号分隔）</label><input id="mTags"></div>
+<div class="form-group"><label>状态</label><select id="mStatus"><option value="exemplary">典范</option><option value="typical">典型</option><option value="edge_case">边界</option><option value="anomaly">异常</option></select></div>
+<div class="form-group"><label>评分 1-5</label><select id="mScore"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
+<div class="form-group"><label>操作员备注</label><textarea id="mNotes"></textarea></div>
+<div class="btn-row"><button class="btn-ghost" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveEdit()">保存</button></div>
+</div></div>
+<script>
+var APP_TOKEN="{{ app_token }}";var currentEntryId=null,currentPage=1;
+function api(u){return fetch(u+(u.includes("?")?"&":"?")+"token="+APP_TOKEN).then(function(r){return r.json()})}
+function apiPut(u,d){return fetch(u+"?token="+APP_TOKEN,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){return r.json()})}
+function apiDel(u){return fetch(u+"?token="+APP_TOKEN,{method:"DELETE"}).then(function(r){return r.json()})}
+function sl(){document.getElementById("loading").classList.add("show")}
+function hl(){document.getElementById("loading").classList.remove("show")}
+function renderStars(n){var s="";for(var i=0;i<5;i++)s+=i<n?"\u2605":"\u2606";return s}
+function renderTags(tags){return(tags||[]).map(function(t){return'<span class="tag tag-typical">'+t+"</span>"}).join(" ")}
+function getStatusClass(s){return s==="exemplary"?"exemplary":s==="anomaly"?"anomaly":s==="edge_case"?"edge":"typical"}
+function loadEntries(pg){pg=pg||currentPage;currentPage=pg;sl();var ct=document.getElementById("fCycleType").value;var st=document.getElementById("fStatus").value;var tg=document.getElementById("fTags").value;var u="/api/knowledge?page="+pg+"&per_page=50";if(ct)u+="&cycle_type="+ct;if(st)u+="&status="+st;if(tg)u+="&tags="+encodeURIComponent(tg);api(u).then(function(d){hl();if(d.error){alert(d.error);return}renderEntries(d.entries||[],d.page);renderStats(d.stats)})["catch"](function(e){hl();alert("加载失败:"+e)})}
+function renderStats(stats){var t=stats.total||0;var o=0,p=0,e=0;var bt=stats.by_type_status||{};if(bt.opening)Object.values(bt.opening).forEach(function(v){o+=v});if(bt.plugging)Object.values(bt.plugging).forEach(function(v){p+=v});if(bt.opening&&bt.opening.exemplary)e+=bt.opening.exemplary;if(bt.plugging&&bt.plugging.exemplary)e+=bt.plugging.exemplary;document.getElementById("statsRow").innerHTML='<div class="stat-card"><div class="label">开口收录</div><div class="value">'+o+'</div></div><div class="stat-card"><div class="label">堵口收录</div><div class="value">'+p+'</div></div><div class="stat-card"><div class="label">典范案例</div><div class="value">'+e+'</div></div><div class="stat-card"><div class="label">总收录</div><div class="value">'+t+"</div></div>"}
+function renderEntries(entries,pg){document.getElementById("entryCount").textContent="第 "+pg+" 页";var tb=document.getElementById("entryBody");if(entries.length===0){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:32px">暂无收录案例</td></tr>';return}var h="";entries.forEach(function(e){h+='<tr><td>'+e.id+'</td><td>'+(e.equipment_id||"-")+'</td><td><span class="tag tag-'+(e.cycle_type==="opening"?"opening":"plugging")+'">'+(e.cycle_type==="opening"?"开口":"堵口")+"</span></td><td style=\"font-weight:600\">"+(e.title||"-")+'</td><td style="font-size:11px">'+(e.start_time||"").substring(0,16)+'</td><td>'+renderTags(e.tags)+'</td><td><span class="stars">'+renderStars(e.quality_score||3)+'</span></td><td><button class="btn-ghost" onclick="openEdit('+e.id+')">编辑</button> <button class="btn-ghost btn-danger" onclick="archiveEntry('+e.id+')">剔除</button></td></tr>'});tb.innerHTML=h}
+function openEdit(id){sl();api("/api/knowledge/"+id).then(function(d){hl();if(d.error){alert(d.error);return}var e=d.entry;currentEntryId=e.id;document.getElementById("modalTitle").textContent="编辑: "+(e.title||"案例");document.getElementById("mTitle").value=e.title||"";document.getElementById("mTags").value=(e.tags||[]).join(", ");document.getElementById("mStatus").value=e.status||"typical";document.getElementById("mScore").value=e.quality_score||3;document.getElementById("mNotes").value=e.operator_notes||"";document.getElementById("editModal").classList.add("show")})}
+function closeModal(){document.getElementById("editModal").classList.remove("show")}
+function saveEdit(){var tg=document.getElementById("mTags").value.split(",").map(function(t){return t.trim()}).filter(Boolean);var d={title:document.getElementById("mTitle").value,tags:tg,status:document.getElementById("mStatus").value,quality_score:parseInt(document.getElementById("mScore").value),operator_notes:document.getElementById("mNotes").value};sl();apiPut("/api/knowledge/"+currentEntryId,d).then(function(r){hl();if(r.error){alert(r.error);return}closeModal();loadEntries()})}
+function archiveEntry(id){if(!confirm("确定要剔除该案例吗？(标记为已归档)"))return;sl();apiDel("/api/knowledge/"+id).then(function(r){hl();if(r.error){alert(r.error);return}loadEntries()})}
+function openAddWizard(){var cycleId=prompt("请输入要收录的周期ID:");if(!cycleId)return;var tags=prompt("请输入标签（逗号分隔），如: 钻透,低压推进:");var tagList=(tags||"").split(",").map(function(t){return t.trim()}).filter(Boolean);var status=prompt("请输入状态 [exemplary/typical/edge_case/anomaly]:","typical")||"typical";var score=parseInt(prompt("评分 (1-5):","3"))||3;var notes=prompt("操作员备注（可选）:","")||"";sl();fetch("/api/knowledge?token="+APP_TOKEN,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cycle_id:parseInt(cycleId),tags:tagList,status:status,quality_score:score,operator_notes:notes})}).then(function(r){return r.json()}).then(function(d){hl();if(d.error){alert("收录失败: "+d.error);return}alert("收录成功! ID: "+d.entry_id);loadEntries()})["catch"](function(e){hl();alert("请求失败: "+e)})}
+loadEntries(1);
+</script>
+</body>
+</html>
