@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<title>趋势分析 — DCS</title>
+<link rel="stylesheet" href="/static/lib/uPlot.min.css">
+<script src="/static/lib/uPlot.iife.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+
+.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
+.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
+.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-header h2 { font-size: 16px; font-weight: 700; }
+.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; }
+
+.tree { flex: 1; overflow-y: auto; padding: 6px 0; }
+.tree::-webkit-scrollbar { width: 4px; }
+.tree::-webkit-scrollbar-track { background: transparent; }
+.tree::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
+.tree-section-title { padding: 6px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
+.tree-group-title { display: flex; align-items: center; gap: 8px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; color: rgba(255,255,255,0.65); user-select: none; }
+.tree-group-title:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.tree-group-title .arrow { font-size: 10px; transition: transform 0.2s; display: inline-block; width: 10px; flex-shrink: 0; }
+.tree-group-title .arrow.open { transform: rotate(90deg); }
+.tree-items { display: none; }
+.tree-items.show { display: block; }
+.tree-param { padding: 6px 20px 6px 40px; font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-param:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.tree-param.checked { color: #91caff; }
+.tree-param .check-box { width: 14px; height: 14px; border: 1.5px solid rgba(255,255,255,0.3); border-radius: 3px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+.tree-param.checked .check-box { background: #1677ff; border-color: #1677ff; }
+.sidebar-footer { margin-top: auto; padding: 14px 20px; font-size: 11px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
+
+/* 主内容 */
+.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
+.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
+.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
+.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
+.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
+
+/* 工具栏 */
+.toolbar { background: #fff; padding: 10px 24px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.toolbar label { font-size: 11px; color: #64748b; font-weight: 600; }
+.toolbar input[type=datetime-local] { padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; }
+.toolbar input[type=datetime-local]:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+/* 事件选择器与左侧参数树风格统一 */
+.event-select-wrap select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; min-width: 200px; height: 38px; }
+.event-select-wrap select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+.event-select-wrap .label { display: block; font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 2px; }
+.event-select-wrap .btn { height: 38px; padding: 0 16px; font-size: 13px; }
+.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; white-space: nowrap; }
+.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
+.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); }
+.btn-sm { padding: 4px 12px; font-size: 11px; border-radius: 6px; }
+.btn-outline { background: #fff; border: 1px solid #e2e8f0; color: #64748b; }
+.btn-outline:hover { border-color: #1677ff; color: #1677ff; }
+.btn-danger { background: #fff; border: 1px solid #fecaca; color: #dc2626; }
+.btn-danger:hover { background: #fef2f2; }
+
+/* 配置面板 */
+.config-panel { background: #fff; margin: 16px 24px 0; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); overflow: hidden; }
+.config-header { padding: 12px 20px; border-bottom: 1px solid #f1f5f9; font-size: 13px; font-weight: 600; color: #0f172a; display: flex; align-items: center; justify-content: space-between; }
+.config-body { padding: 12px 20px; max-height: 200px; overflow-y: auto; }
+.config-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 13px; }
+.config-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f8fafc; font-size: 12px; }
+.config-row:last-child { border-bottom: none; }
+.config-row .color-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.config-row .param-name { width: 140px; font-weight: 500; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.config-row .param-label { width: 160px; color: #64748b; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.config-row select, .config-row input { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 11px; outline: none; }
+.config-row select:focus, .config-row input:focus { border-color: #1677ff; }
+.config-row input[type=number] { width: 72px; }
+.config-row .remove-btn { cursor: pointer; color: #94a3b8; font-size: 16px; padding: 0 4px; }
+.config-row .remove-btn:hover { color: #dc2626; }
+
+/* 图表区 */
+.chart-wrap { flex: 1; margin: 16px 24px 24px; background: #fff; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); display: flex; flex-direction: column; min-height: 500px; position: relative; }
+.chart-area { flex: 1; position: relative; }
+.loading-overlay { display: none; position: absolute; inset: 0; background: rgba(255,255,255,0.7); justify-content: center; align-items: center; z-index: 10; }
+.loading-overlay.show { display: flex; }
+.spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top: 3px solid #1677ff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar .tree-param, .sidebar .tree-section-title, .sidebar .sidebar-header .version { display: none; }
+    .main { margin-left: 60px; }
+    .config-panel { margin: 8px 12px 0; }
+    .chart-wrap { margin: 8px 12px 12px; }
+    .toolbar { flex-direction: column; align-items: flex-start; }
+}
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>DCS 分析平台</h2>
+        <div class="version">趋势分析</div>
+    </div>
+    <div class="tree-section-title">选择变量</div>
+    <div class="tree" id="treeNav"></div>
+    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 已选 0 个变量</div>
+</div>
+
+<div class="main">
+    <div class="header">
+        <h1>趋势分析</h1>
+        
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend" class="active">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base">知识库</a>
+            <a href="/detect-config">检测规则</a>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <div>
+            <label>开始时间</label><br>
+            <input type="datetime-local" id="startTime">
+        </div>
+        <div>
+            <label>结束时间</label><br>
+            <input type="datetime-local" id="endTime">
+        </div>
+        <button class="btn btn-primary" onclick="doQuery()">查询</button>
+        <div class="event-box event-select-wrap">
+            <span class="label">开口事件</span>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <select id="eventSelect" onchange="onEventSelect()">
+                    <option value="">-- 选择开口事件 --</option>
+                </select>
+                <button class="btn btn-outline" onclick="fetchEvents()" title="检测开口事件">🔍</button>
+            </div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="clearAll()" style="margin-left:auto;">清空所有变量</button>
+    </div>
+
+    <div class="config-panel">
+        <div class="config-header">
+            <span>已选变量配置</span>
+            <span style="font-size:11px;color:#94a3b8;">Y轴范围留空 = 自动</span>
+        </div>
+        <div class="config-body" id="configBody">
+            <div class="config-empty">左侧勾选变量开始分析</div>
+        </div>
+    </div>
+
+    <div class="chart-wrap">
+        <div id="chartArea" class="chart-area"></div>
+    </div>
+</div>
+
+<script>
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
+function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
+const GROUPS = {{ groups_json | safe }};
+const LABELS = {{ labels_json | safe }};
+const API_TOKEN = "{{ app_token }}";
+checkLogin();
+const COLORS = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#2f54eb','#a0d911','#f5222d','#1890ff','#fa541c','#9254de','#597ef7'];
+let selectedParams = [];
+let uplot = null;
+
+// === 销毁图表 ===
+function destroyChart() {
+    if (uplot) { uplot.destroy(); uplot = null; }
+    const tip = document.getElementById('uplot-tooltip');
+    if (tip) tip.remove();
+    const legend = document.getElementById('chart-legend');
+    if (legend) legend.innerHTML = '';
+    const indicator = document.getElementById('zoomIndicator');
+    if (indicator) indicator.remove();
+}
+
+// === 数据转换: API格式 → uPlot列格式 ===
+//   应用每条曲线的 Y轴偏移量 (offset)，仅影响渲染位置不影响原始数据
+function buildUplotData(apiData) {
+    const first = apiData.series.find(s => s.data.length > 0);
+    if (!first) return null;
+    const timestamps = first.data.map(d => new Date(d.time).getTime() / 1000);
+    const cols = [timestamps];
+    apiData.series.forEach(s => {
+        const map = {};
+        s.data.forEach(d => { map[new Date(d.time).getTime() / 1000] = d.value; });
+        const cfg = selectedParams.find(x => x.param === s.param);
+        const off = (cfg && cfg.offset) ? cfg.offset : 0;
+        cols.push(timestamps.map(t => {
+            const v = map[t];
+            if (v === undefined) return null;
+            return v + off;  // 视觉上偏移，不影响 tooltip 显示
+        }));
+    });
+    return cols;
+}
+
+// 记录原始值 (未偏移) 供 tooltip 显示
+let _rawValues = [];
+
+// === 自定义 Tooltip 插件（固定页面右侧） ===
+function tooltipPlugin() {
+    let over;
+    const tip = document.createElement('div');
+    tip.id = 'uplot-tooltip';
+    tip.style.cssText = [
+        'display:none;position:fixed;z-index:100;pointer-events:none;',
+        'top:50%;right:24px;transform:translateY(-50%);',
+        'background:rgba(15,23,42,0.95);color:#f1f5f9;',
+        'padding:12px 16px;border-radius:8px;',
+        'font-size:12px;line-height:1.6;',
+        'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.2);',
+        'border:1px solid #334155;',
+        'min-width:220px;max-width:280px;'
+    ].join('');
+    return {
+        hooks: {
+            init: (u) => {
+                over = u.over;
+                tip.owner = u;  // 缓存 uPlot 实例引用
+                document.body.appendChild(tip);
+                over.addEventListener('mouseenter', () => { tip.style.display = 'block'; });
+                over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+            },
+            setCursor: (u) => {
+                const { idx } = u.cursor;
+                if (idx == null) { tip.style.display = 'none'; return; }
+                tip.style.display = 'block';
+                const t = u.data[0][idx];
+                const d = new Date(t * 1000);
+                const pad = n => String(n).padStart(2, '0');
+                const timeStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+                    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+                let html = '<div style="font-weight:700;margin-bottom:10px;color:#e2e8f0;font-size:12px;' +
+                    'border-bottom:1px solid #334155;padding-bottom:8px;">⏱ ' + timeStr + '</div>';
+                for (let i = 1; i < u.data.length; i++) {
+                    const vRaw = (_rawValues[i-1] && _rawValues[i-1][idx] !== undefined) ? _rawValues[i-1][idx] : null;
+                    const s = u.series[i];
+                    // 直接从 uPlot series 取颜色，不依赖 selectedParams (左侧勾选池)
+                    const clr = s._color || (typeof s.stroke === 'function' ? '#1677ff' : (s.stroke || '#999'));
+                    // 数值统一跟随曲线颜色，更直观对应
+                    const valHtml = (vRaw == null)
+                        ? '<span style="color:#64748b;">--</span>'
+                        : '<span style="font-weight:700;color:' + clr + ';font-variant-numeric:tabular-nums;text-shadow:0 0 8px ' + clr + '66;">' + Number(vRaw).toFixed(2) + '</span>';
+                    html += '<div data-tip-row="' + (i-1) + '" style="display:flex;align-items:center;gap:8px;margin:4px 0;padding:4px 8px 4px 12px;' +
+                        'border-left:5px solid ' + clr + ';border-radius:0 6px 6px 0;' +
+                        'background:linear-gradient(90deg,' + clr + '22 0%,rgba(255,255,255,0.04) 100%);' +
+                        'white-space:nowrap;">' +
+                        '<span style="flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;color:#e2e8f0;font-size:11px;font-weight:600;">' +
+                        (s.label || '') + '</span>' +
+                        valHtml + '</div>';
+                }
+                tip.innerHTML = html;
+                // 缓存行引用供 toggleSeriesVis 同步
+                window._tipRows = tip.querySelectorAll('[data-tip-row]');
+            }
+        }
+    };
+}
+
+// === 初始化时间 ===
+function initTime() {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const pad = n => String(n).padStart(2,'0');
+    const fmt = d => d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    document.getElementById('endTime').value = fmt(now);
+    document.getElementById('startTime').value = fmt(todayStart);
+}
+
+// === 构建树 ===
+function buildTree() {
+    const tree = document.getElementById('treeNav');
+    let html = '';
+    GROUPS.forEach(g => {
+        html += `<div class="tree-group">
+            <div class="tree-group-title" onclick="toggleGroup('${g.id}')">
+                <span class="arrow">▶</span> ${g.name}
+            </div>
+            <div class="tree-items" id="items_${g.id}"></div>
+        </div>`;
+    });
+    tree.innerHTML = html;
+
+    GROUPS.forEach(g => {
+        const div = document.getElementById('items_' + g.id);
+        let sub = '';
+        const CAT_CN = {remote_command:'遥控指令', control_valve:'控制阀', position:'位置', pressure:'压力', control:'控制', safety:'安全', hydraulic:'液压', mud_quantity:'打泥量'};
+        Object.entries(g.categories).forEach(([cat, params]) => {
+            sub += '<div style="padding:4px 20px;font-size:10px;color:rgba(255,255,255,0.25);text-transform:uppercase;">' + (CAT_CN[cat] || cat) + '</div>';
+            params.forEach(p => {
+                sub += `<div class="tree-param" data-param="${p}" onclick="toggleParam('${p}', this)">
+                    <span class="check-box"></span> ${LABELS[p] || p}
+                </div>`;
+            });
+        });
+        div.innerHTML = sub;
+    });
+
+    // 默认展开第一个组
+    const first = document.getElementById('items_' + GROUPS[0].id);
+    if (first) {
+        first.classList.add('show');
+        first.parentElement.querySelector('.arrow').classList.add('open');
+    }
+}
+
+function toggleGroup(id) {
+    const items = document.getElementById('items_' + id);
+    const arrow = items.parentElement.querySelector('.arrow');
+    items.classList.toggle('show');
+    arrow.classList.toggle('open');
+}
+
+// === 勾选/取消变量（仅管理 selectedParams 池，不触发趋势图刷新） ===
+function toggleParam(param, el) {
+    const idx = selectedParams.findIndex(s => s.param === param);
+    if (idx >= 0) {
+        selectedParams.splice(idx, 1);
+        el.classList.remove('checked');
+        el.querySelector('.check-box').textContent = '';
+    } else {
+        // 若已存在 (color 池里) 找原来的颜色优先, 否则按当前长度分配
+        const existing = selectedParams.find(s => s.param === param);
+        const color = (existing && existing.color) || COLORS[selectedParams.length % COLORS.length];
+        selectedParams.push({
+            param: param,
+            label: LABELS[param] || param,
+            color: color,
+            yAxisIndex: 0,
+            yMin: '',
+            yMax: '',
+            offset: 0
+        });
+        el.classList.add('checked');
+        el.querySelector('.check-box').textContent = '✓';
+    }
+    document.getElementById('sidebarFooter').textContent = '已选 ' + selectedParams.length + ' 个变量';
+    renderConfig();
+}
+
+function clearAll() {
+    selectedParams = [];
+    document.querySelectorAll('.tree-param.checked').forEach(el => {
+        el.classList.remove('checked');
+        el.querySelector('.check-box').textContent = '';
+    });
+    document.getElementById('sidebarFooter').textContent = '已选 0 个变量';
+    renderConfig();
+    destroyChart();
+}
+
+// === 渲染配置面板 ===
+function renderConfig() {
+    const body = document.getElementById('configBody');
+    if (selectedParams.length === 0) {
+        body.innerHTML = '<div class="config-empty">左侧勾选变量开始分析</div>';
+        return;
+    }
+    let html = '';
+    selectedParams.forEach((s, i) => {
+        html += `<div class="config-row">
+            <span class="color-dot" style="background:${s.color};" title="${s.param}"></span>
+            <span class="param-name" title="${s.param}">${s.param}</span>
+            <span class="param-label">${s.label}</span>
+            <span style="font-size:10px;color:#94a3b8;">Y轴</span>
+            <select onchange="updateConfig(${i},'yAxisIndex',parseInt(this.value))">
+                <option value="0" ${s.yAxisIndex===0?'selected':''}>左1</option>
+                <option value="1" ${s.yAxisIndex===1?'selected':''}>右1</option>
+                <option value="2" ${s.yAxisIndex===2?'selected':''}>左2</option>
+                <option value="3" ${s.yAxisIndex===3?'selected':''}>右2</option>
+            </select>
+            <span style="font-size:10px;color:#94a3b8;" title="视觉偏移，不影响原始数值">偏移</span>
+            <input type="number" placeholder="0" value="${s.offset||0}" step="any" style="width:55px;"
+                onchange="updateConfig(${i},'offset',parseFloat(this.value)||0)" title="正数上移，负数下移">
+            <input type="number" placeholder="Min" value="${s.yMin}" step="any" style="width:50px;"
+                onchange="updateConfig(${i},'yMin',this.value)">
+            <input type="number" placeholder="Max" value="${s.yMax}" step="any" style="width:50px;"
+                onchange="updateConfig(${i},'yMax',this.value)">
+            <span class="remove-btn" onclick="removeParam(${i})" title="移除">✕</span>
+        </div>`;
+    });
+    body.innerHTML = html;
+}
+
+function updateConfig(idx, key, val) {
+    selectedParams[idx][key] = val;
+}
+
+function removeParam(idx) {
+    const p = selectedParams[idx];
+    selectedParams.splice(idx, 1);
+    const el = document.querySelector(`.tree-param[data-param="${p.param}"]`);
+    if (el) {
+        el.classList.remove('checked');
+        el.querySelector('.check-box').textContent = '';
+    }
+    document.getElementById('sidebarFooter').textContent = '已选 ' + selectedParams.length + ' 个变量';
+    renderConfig();
+    if (selectedParams.length === 0) destroyChart();
+}
+
+// === 查询 ===
+function doQuery() {
+    if (selectedParams.length === 0) return;
+    const start = document.getElementById('startTime').value;
+    const end = document.getElementById('endTime').value;
+    if (!start || !end) return;
+
+    const paramStr = selectedParams.map(s => s.param).join(',');
+    const url = '/api/trend?params=' + encodeURIComponent(paramStr) +
+                '&start=' + encodeURIComponent(start) +
+                '&end=' + encodeURIComponent(end) +
+                '&token=' + API_TOKEN;
+
+    fetch(url)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            renderChart(data);
+        })
+        .catch(e => alert('请求失败: ' + e));
+}
+
+// === 渲染 uPlot 图表 ===
+function renderChart(data) {
+    destroyChart();
+
+    const cols = buildUplotData(data);
+    if (!cols) return;
+
+    // 缓存原始值（未偏移）供 tooltip 显示
+    _rawValues = data.series.map(s => s.data.map(d => d.value));
+
+    // 收集已使用的 Y 轴
+    let usedAxes = new Set();
+    selectedParams.forEach(s => usedAxes.add(s.yAxisIndex));
+    let sortedAxes = [...usedAxes].sort((a,b) => a-b);
+
+    // 映射 yAxisIndex → scale key
+    let axisToScale = {};
+    sortedAxes.forEach((id, i) => { axisToScale[id] = 'y' + i; });
+
+    // 构建 scales
+    let scales = { x: { time: true } };
+    sortedAxes.forEach((id, i) => {
+        let range = undefined;
+        selectedParams.filter(s => s.yAxisIndex === id).forEach(s => {
+            if (s.yMin !== '' && s.yMax !== '') {
+                let r = [parseFloat(s.yMin), parseFloat(s.yMax)];
+                if (!range) range = r;
+                else { range[0] = Math.min(range[0], r[0]); range[1] = Math.max(range[1], r[1]); }
+            }
+        });
+        scales['y' + i] = { auto: !range };
+        if (range) scales['y' + i].range = (u, min, max) => range;
+    });
+
+    // 构建 series
+    let series = [{}];
+    data.series.forEach(s => {
+        let cfg = selectedParams.find(x => x.param === s.param);
+        if (!cfg) return;
+        series.push({
+            label: cfg.label,
+            stroke: cfg.color,
+            _color: cfg.color,  // tooltip 用（不受 uPlot 内部转换影响）
+            width: 2,
+            scale: axisToScale[cfg.yAxisIndex],
+            spanGaps: false,
+            value: (u, v) => v == null ? '--' : Number(v).toFixed(4),
+        });
+    });
+
+    // 构建 axes: 每个 Y 轴独立配色 + 标签
+    let axes = [{
+        stroke: '#cbd5e1',
+        grid: { stroke: '#e2e8f0', width: 1 },
+        font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
+    }];
+    sortedAxes.forEach((id, i) => {
+        let isLeft = id % 2 === 0;
+        let extraSpace = Math.floor(id / 2) * 55;
+        // 该轴上的曲线
+        let axisCurves = selectedParams.filter(s => s.yAxisIndex === id);
+        // 轴标签: 单曲线用全称, 多曲线记数
+        let axisLabel = '';
+        let axisColor = '#94a3b8';
+        if (axisCurves.length === 1) {
+            axisLabel = axisCurves[0].label;
+            axisColor = axisCurves[0].color;
+        } else if (axisCurves.length > 1) {
+            axisLabel = axisCurves.length + ' 条曲线';
+            axisColor = '#64748b';
+        }
+        axes.push({
+            scale: 'y' + i,
+            side: isLeft ? 3 : 1,
+            size: 62 + extraSpace,
+            stroke: axisColor,
+            font: '10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif',
+            label: axisLabel,
+            labelFont: `bold 10px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif`,
+            labelGap: 4,
+            grid: {
+                show: i === 0,
+                stroke: '#f1f5f9',
+                width: 1,
+                dash: [4, 4]
+            },
+            values: (u, vals) => vals.map(v => {
+                if (v == null) return '';
+                if (Math.abs(v) >= 10000) return (v/1000).toFixed(1) + 'k';
+                if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(1);
+                if (Number.isInteger(v) && Math.abs(v) < 1000) return v.toString();
+                return v.toFixed(2);
+            }),
+        });
+    });
+
+    // 创建 uPlot
+    const container = document.getElementById('chartArea');
+    const opts = {
+        width: Math.max(container.clientWidth - 4, 400),
+        height: Math.max(container.clientHeight - 4, 300),
+        cursor: {
+            show: true,
+            x: true,
+            y: true,
+            drag: { x: true, y: false, setScale: true },
+            focus: { prox: 10 },
+            points: { show: false },
+        },
+        legend: { show: false },
+        plugins: [tooltipPlugin()],
+        scales: scales,
+        axes: axes,
+        series: series,
+    };
+
+    uplot = new uPlot(opts, cols, container);
+
+    // 缩放级别指示器
+    setupZoomIndicator();
+
+    // 自定义图例
+    buildLegend(data);
+
+    // 响应式
+    window.addEventListener('resize', () => {
+        if (uplot) {
+            const c = document.getElementById('chartArea');
+            uplot.setSize({
+                width: Math.max(c.clientWidth - 4, 400),
+                height: Math.max(c.clientHeight - 4, 300)
+            });
+        }
+    });
+}
+
+
+// === 自定义图例 ===
+function buildLegend(data) {
+    let legendDiv = document.getElementById('chart-legend');
+    if (!legendDiv) {
+        legendDiv = document.createElement('div');
+        legendDiv.id = 'chart-legend';
+        legendDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;' +
+            'border-bottom:1px solid #f1f5f9;max-height:60px;overflow-y:auto;';
+        const chartWrap = document.getElementById('chartArea').parentElement;
+        chartWrap.insertBefore(legendDiv, chartWrap.firstChild);
+    }
+    let html = '';
+    data.series.forEach((s, i) => {
+        let cfg = selectedParams.find(x => x.param === s.param);
+        if (!cfg) return;
+        html += '<label data-series-idx="' + (i+1) + '" data-series-label="' + s.label + '" style="display:flex;align-items:center;gap:4px;font-size:11px;' +
+            'color:#475569;cursor:pointer;user-select:none;padding:2px 0;" ' +
+            'onclick="toggleSeriesVis(' + (i+1) + ', this)">' +
+            '<span style="width:10px;height:2px;background:' + cfg.color + ';flex-shrink:0;"></span>' +
+            s.label + '</label>';
+    });
+    legendDiv.innerHTML = html;
+    // 绑定隐藏 series 后，uPlot 内部 idx 可能变，所以做 label → uPlot idx 映射缓存
+    legendDiv._labelToIdx = {};
+    data.series.forEach((s, i) => { legendDiv._labelToIdx[s.label] = i + 1; });
+}
+
+// === 图例切换可见性（带 tooltip 同步） ===
+function toggleSeriesVis(idx, el) {
+    if (!uplot) return;
+    const s = uplot.series[idx];
+    const visible = s.show !== false;
+    uplot.setSeries(idx, { show: !visible }, false);
+    uplot.redraw();
+    el.style.opacity = visible ? '0.35' : '1';
+    el.dataset.hidden = visible ? '1' : '0';
+    // 同步 tooltip 中对应的行（按 label 匹配）
+    if (uplot.series[idx]) {
+        const label = uplot.series[idx].label;
+        document.querySelectorAll('#uplot-tooltip [data-tip-row]').forEach(row => {
+            const rowIdx = parseInt(row.dataset.tipRow);
+            if (uplot.series[rowIdx + 1] && uplot.series[rowIdx + 1].label === label) {
+                row.style.display = visible ? 'none' : 'flex';
+            }
+        });
+    }
+}
+
+// === 保存图片 ===
+function saveChartImage() {
+    if (!uplot) return;
+    const canvas = uplot.ctx.canvas;
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = canvas.width;
+    exportCanvas.height = canvas.height;
+    const ctx = exportCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(canvas, 0, 0);
+    const link = document.createElement('a');
+    link.download = 'DCS趋势_' + new Date().toISOString().slice(0,10) + '.png';
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+}
+
+// === 重置缩放 ===
+function resetZoom() {
+    if (!uplot || !uplot.data[0] || uplot.data[0].length < 2) return;
+    const xMin = uplot.data[0][0];
+    const xMax = uplot.data[0][uplot.data[0].length - 1];
+    uplot.setScale('x', { min: xMin, max: xMax });
+    if (uplot.scales) {
+        Object.keys(uplot.scales).forEach(k => {
+            if (k !== 'x') uplot.setScale(k, { min: null, max: null });
+        });
+    }
+}
+
+// === 缩放级别指示器 ===
+function setupZoomIndicator() {
+    if (!uplot) return;
+    let el = document.getElementById('zoomIndicator');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'zoomIndicator';
+        el.style.cssText = 'position:absolute;top:8px;right:120px;font-size:11px;color:#94a3b8;' +
+            'background:rgba(255,255,255,0.85);padding:2px 10px;border-radius:4px;pointer-events:none;z-index:10;';
+        document.getElementById('chartArea').appendChild(el);
+    }
+    const updateIndicator = () => {
+        if (!uplot || !uplot.scales.x) return;
+        const sc = uplot.scales.x;
+        const total = sc.max - sc.min;
+        if (total <= 0) { el.textContent = ''; return; }
+        const visible = (uplot.scales.x.max || 0) - (uplot.scales.x.min || 0);
+        const pct = (visible / total) * 100;
+        const level = pct >= 90 ? '' : pct >= 40 ? ' 宽' : pct >= 15 ? ' 中' : ' 细';
+        el.textContent = '范围: ' + Math.round(pct) + '%' + level;
+    };
+    if (!uplot.hooks.setScale) uplot.hooks.setScale = [];
+    uplot.hooks.setScale.push((u, key) => { if (key === 'x') updateIndicator(); });
+    updateIndicator();
+}
+
+// === 添加工具栏按钮（截图/重置） ===
+function addToolbarButtons() {
+    const toolbar = document.querySelector('.toolbar');
+    if (!toolbar || document.getElementById('btnSaveImg')) return;
+    const btnGroup = document.createElement('div');
+    btnGroup.style.cssText = 'margin-left:auto;display:flex;gap:6px;';
+    btnGroup.innerHTML =
+        '<button class="btn btn-outline btn-sm" id="btnReset" onclick="resetZoom()" title="重置缩放">↺ 重置</button>' +
+        '<button class="btn btn-outline btn-sm" id="btnSaveImg" onclick="saveChartImage()" title="保存图片">📷 截图</button>';
+    toolbar.appendChild(btnGroup);
+}
+
+// === 回转到位事件检测 ===
+let currentEvents = [];
+
+function fetchEvents() {
+    const start = document.getElementById('startTime').value;
+    const end = document.getElementById('endTime').value;
+    if (!start || !end) { alert('请先设置时间范围'); return; }
+
+    const url = '/api/trend/events?start=' + encodeURIComponent(start) +
+                '&end=' + encodeURIComponent(end) +
+                '&token=' + API_TOKEN;
+
+    const sel = document.getElementById('eventSelect');
+    sel.innerHTML = '<option value="">检测中...</option>';
+
+    fetch(url)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            currentEvents = data.events;
+            sel.innerHTML = '<option value="">-- 选择开口事件 --</option>';
+            data.events.forEach((ev, i) => {
+                const d = new Date(ev.trigger_time);
+                const pad = n => String(n).padStart(2,'0');
+                const ts = pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+
+                           pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+                sel.innerHTML += '<option value="' + i + '">' +
+                    ev.machine + ' 遥控开口 @ ' + ts + '</option>';
+            });
+            if (data.events.length === 0) {
+                sel.innerHTML = '<option value="">未检测到开口事件</option>';
+                alert('该时间范围内未检测到开口事件');
+            }
+        })
+        .catch(e => alert('事件检测失败: ' + e));
+}
+
+function onEventSelect() {
+    const idx = document.getElementById('eventSelect').value;
+    if (idx === '') return;
+    const ev = currentEvents[parseInt(idx)];
+    if (!ev) return;
+    const fmt = (iso) => {
+        const d = new Date(iso);
+        const pad = n => String(n).padStart(2,'0');
+        return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+    };
+    document.getElementById('startTime').value = fmt(ev.window_start);
+    document.getElementById('endTime').value = fmt(ev.window_end);
+    doQuery();
+}
+
+// === 初始化 ===
+initTime();
+buildTree();
+addToolbarButtons();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>炉前开堵口数据分析平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.login-box{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.15);padding:40px;width:380px;max-width:95vw}
+.login-box h2{font-size:22px;color:#1f2937;margin-bottom:6px}
+.login-box .sub{font-size:12px;color:#94a3b8;margin-bottom:24px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:4px}
+.form-group input{width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;transition:border .2s}
+.form-group input:focus{border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,0.1)}
+.btn-login{width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#667eea,#764ba2);margin-top:8px;transition:opacity .2s}
+.btn-login:hover{opacity:.9}
+.msg{text-align:center;font-size:12px;margin-top:12px;min-height:20px}
+.msg.err{color:#ef4444}
+.actions{text-align:center;margin-top:16px}
+.actions a{font-size:12px;color:#94a3b8;cursor:pointer;text-decoration:none}
+.actions a:hover{color:#667eea}
+/* 设置弹窗 */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;padding:28px;width:420px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.2)}
+.modal h3{font-size:16px;color:#1f2937;margin-bottom:16px}
+.modal .form-group input{font-size:13px;padding:8px 12px}
+.modal .btn-row{display:flex;gap:8px;margin-top:16px}
+.modal .btn-save{flex:1;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#667eea,#764ba2)}
+.modal .btn-cancel{flex:1;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#64748b;background:#fff}
+.modal .msg{text-align:left}
+</style>
+</head>
+<body>
+<div class="login-box">
+<h2>炉前开堵口数据分析平台</h2>
+<div class="sub">高炉炉前开口机/堵口机专用</div>
+<form onsubmit="doLogin(event)">
+<div class="form-group"><label>账号</label><input id="username" value="admin" placeholder="admin"></div>
+<div class="form-group"><label>密码</label><input id="password" type="password" placeholder="请输入密码"></div>
+<button type="submit" class="btn-login">登 录</button>
+</form>
+<div class="msg" id="msg"></div>
+<div class="actions"><a onclick="openSettings()">⚙ 系统设置</a></div>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal-overlay" id="settingsModal">
+<div class="modal">
+<h3>⚙ 系统设置</h3>
+<div class="form-group"><label>设置密码 (保护配置)</label><input id="settingsPwdCheck" type="password" placeholder="请输入设置密码" onchange="loadSettings()"></div>
+<hr style="border:none;border-top:1px solid #f1f5f9;margin:12px 0">
+<div class="form-group"><label>InfluxDB 地址</label><input id="influxUrl" placeholder="http://10.56.128.202:8086"></div>
+<div class="form-group"><label>InfluxDB Token</label><input id="influxToken" type="password" placeholder="输入 Token"></div>
+<div class="form-group"><label>组织 (Org)</label><input id="influxOrg" placeholder="myOrg"></div>
+<div class="form-group"><label>Bucket</label><input id="influxBucket" placeholder="islag"></div>
+<div class="form-group"><label>查询超时 (毫秒)</label><input id="influxTimeout" type="number" placeholder="180000"></div>
+<div class="form-group"><label>Web 访问 Token</label><input id="appToken" placeholder="dcs2026"></div>
+<div class="form-group"><label>新设置密码 (留空保持)</label><input id="settingsPwd" type="password" placeholder="留空保持不变"></div>
+<div class="btn-row">
+<button class="btn-save" onclick="saveSettings()">保存配置</button>
+<button class="btn-cancel" onclick="closeSettings()">取消</button>
+</div>
+<div class="msg" id="sMsg"></div>
+</div>
+</div>
+
+<script>
+async function doLogin(e){
+    e.preventDefault();
+    var u=document.getElementById('username').value.trim();
+    var p=document.getElementById('password').value.trim();
+    var r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    var d=await r.json();
+    if(d.ok){setTimeout(function(){window.location.href="/?token={{ app_token }}"},300)}
+    else{console.log('LOGIN FAILED - server returned:',d);document.getElementById('msg').innerHTML=d.error;document.getElementById('msg').className='msg err'}
+}
+function openSettings(){
+    document.getElementById('settingsModal').classList.add('show');
+    document.getElementById('settingsPwdCheck').value='';
+    // 禁用输入（密码未验证）
+    ['influxUrl','influxToken','influxOrg','influxBucket','influxTimeout','appToken','settingsPwd'].forEach(id=>document.getElementById(id).disabled=true);
+    document.getElementById('sMsg').innerHTML='';
+    document.getElementById('sMsg').className='msg';
+}
+function closeSettings(){document.getElementById('settingsModal').classList.remove('show')}
+async function loadSettings(){
+    var pwd=document.getElementById('settingsPwdCheck').value;
+    if(!pwd)return;
+    var r=await fetch('/api/settings/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
+    var d=await r.json();
+    if(!d.ok){document.getElementById('sMsg').innerHTML='<span class="err">密码错误</span>';return}
+    // 解锁输入
+    ['influxUrl','influxToken','influxOrg','influxBucket','influxTimeout','appToken','settingsPwd'].forEach(id=>document.getElementById(id).disabled=false);
+    // 加载现有配置
+    var cr=await fetch('/api/settings/config?token='+(d.token||''));
+    var cfg=await cr.json();
+    document.getElementById('influxUrl').value=cfg.INFLUX_URL||'';
+    document.getElementById('influxOrg').value=cfg.INFLUX_ORG||'';
+    document.getElementById('influxBucket').value=cfg.INFLUX_BUCKET||'';
+    document.getElementById('influxTimeout').value=cfg.INFLUX_TIMEOUT_MS||'';
+    document.getElementById('appToken').value=cfg.APP_TOKEN&&cfg.APP_TOKEN.includes('***')?'':(cfg.APP_TOKEN||'');
+    document.getElementById('settingsPwd').value='';
+    document.getElementById('sMsg').innerHTML='已加载当前配置';
+    document.getElementById('sMsg').className='msg ok';
+}
+async function saveSettings(){
+    var data={
+        INFLUX_URL:document.getElementById('influxUrl').value.trim(),
+        INFLUX_TOKEN:document.getElementById('influxToken').value.trim()||undefined,
+        INFLUX_ORG:document.getElementById('influxOrg').value.trim(),
+        INFLUX_BUCKET:document.getElementById('influxBucket').value.trim(),
+        INFLUX_TIMEOUT_MS:document.getElementById('influxTimeout').value.trim(),
+        APP_TOKEN:document.getElementById('appToken').value.trim(),
+        SETTINGS_PASSWORD:document.getElementById('settingsPwd').value.trim()||undefined
+    };
+    Object.keys(data).forEach(k=>{if(data[k]===undefined)delete data[k]});
+    var r=await fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    var d=await r.json();
+    document.getElementById('sMsg').innerHTML=d.ok?'<span style="color:#166534">保存成功</span>':'<span style="color:#ef4444">'+d.error+'</span>';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实时数据监控 — DCS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
+
+/* === 左侧导航 (阿里云风格深色侧栏) === */
+.sidebar { width: 220px; min-width: 220px; background: linear-gradient(180deg, #1a2744 0%, #243356 50%, #2d3f66 100%); color: #fff; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; }
+.sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent); }
+.sidebar-header { padding: 24px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+.sidebar-header .version { font-size: 10px; opacity: 0.4; margin-top: 3px; letter-spacing: 0.5px; }
+
+/* 侧边栏搜索 */
+.sidebar-search { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.sidebar-search input { width: 100%; padding: 7px 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; font-size: 12px; background: rgba(255,255,255,0.06); color: #fff; outline: none; transition: all 0.2s; }
+.sidebar-search input::placeholder { color: rgba(255,255,255,0.3); }
+.sidebar-search input:focus { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.1); }
+
+/* 树形导航 */
+.tree { flex: 1; overflow-y: auto; padding: 6px 0; }
+.tree::-webkit-scrollbar { width: 4px; }
+.tree::-webkit-scrollbar-track { background: transparent; }
+.tree::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
+.tree-section-title { padding: 6px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.3); font-weight: 600; }
+
+/* 全部设备 */
+.tree-item-all { display: flex; align-items: center; gap: 10px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); }
+.tree-item-all:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.tree-item-all.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
+
+/* 设备分组标题 */
+.tree-group-title { display: flex; align-items: center; gap: 8px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-left: 3px solid transparent; color: rgba(255,255,255,0.65); user-select: none; }
+.tree-group-title:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.tree-group-title.active { background: rgba(22,119,255,0.15); border-left-color: #1677ff; color: #fff; }
+.tree-group-title .arrow { font-size: 10px; transition: transform 0.2s; display: inline-block; width: 10px; flex-shrink: 0; }
+.tree-group-title .arrow.open { transform: rotate(90deg); }
+.tree-group-title .badge { margin-left: auto; background: rgba(255,255,255,0.1); font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+
+/* 分类/参数子项 */
+.tree-items { display: none; }
+.tree-items.show { display: block; }
+.tree-cat { padding: 6px 16px 6px 36px; font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent; font-weight: 500; }
+.tree-cat:hover { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.8); }
+.tree-cat.active { color: #91caff; border-left-color: #91caff; background: rgba(22,119,255,0.08); }
+.tree-param { padding: 3px 16px 3px 52px; font-size: 11px; color: rgba(255,255,255,0.35); cursor: pointer; transition: all 0.15s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-param:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.03); }
+.tree-param.active { color: #91caff; background: rgba(22,119,255,0.06); }
+
+/* 侧边栏底部 */
+.sidebar-footer { padding: 10px 20px; font-size: 10px; border-top: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* === 主内容区 === */
+.main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.header { background: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); position: sticky; top: 0; z-index: 50; }
+.header h1 { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #1a1a2e, #1677ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.header .nav-links { margin-left: auto; display: flex; gap: 6px; }
+.header .nav-links a { padding: 6px 16px; border-radius: 6px; font-size: 13px; text-decoration: none; color: #64748b; transition: all 0.2s; font-weight: 500; }
+.header .nav-links a:hover { background: #f0f5ff; color: #1677ff; }
+.header .nav-links a.active { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.3); }
+
+/* 工具栏 (阿里云风格) */
+.toolbar { background: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; }
+.toolbar .toggle-label { font-size: 13px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; color: #1f2937; }
+.toolbar .toggle-switch { width: 40px; height: 22px; background: #e2e8f0; border-radius: 11px; position: relative; cursor: pointer; transition: all 0.3s; }
+.toolbar .toggle-switch.on { background: #52c41a; box-shadow: 0 0 4px rgba(82,196,26,0.3); }
+.toolbar .toggle-switch::after { content: ''; width: 18px; height: 18px; background: #fff; border-radius: 50%; position: absolute; top: 2px; left: 2px; transition: left 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+.toolbar .toggle-switch.on::after { left: 20px; }
+.toolbar .refresh-select { padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; outline: none; background: #fff; color: #1f2937; }
+.toolbar .refresh-select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22,119,255,0.1); }
+.toolbar .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #52c41a; display: inline-block; box-shadow: 0 0 4px rgba(82,196,26,0.5); }
+.toolbar .status-text { font-size: 12px; color: #52c41a; font-weight: 500; }
+.toolbar .timestamp { font-size: 11px; color: #94a3b8; margin-left: auto; }
+
+/* 表格卡片 */
+.content { flex: 1; padding: 24px 32px; overflow-y: auto; }
+.table-wrap { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02); overflow: hidden; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { background: #f8fafc; padding: 12px 16px; text-align: left; font-weight: 600; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+.data-table td { padding: 10px 16px; border-bottom: 1px solid #f8fafc; white-space: nowrap; }
+.data-table tbody tr { transition: background 0.15s; }
+.data-table tbody tr:hover { background: #f0f5ff; }
+.data-table tbody tr:nth-child(even) { background: #fafbfc; }
+.data-table tbody tr:nth-child(even):hover { background: #f0f5ff; }
+.data-table .col-index { width: 50px; text-align: center; color: #94a3b8; font-size: 12px; }
+.data-table .col-tag { width: 140px; font-family: "Consolas", monospace; font-size: 12px; color: #0f172a; }
+.data-table .col-label { width: 200px; color: #1f2937; }
+.data-table .col-value { width: 120px; font-weight: 600; font-size: 14px; }
+.data-table .col-time { width: 180px; color: #94a3b8; font-size: 12px; }
+.data-table .value-zero { color: #cbd5e1; }
+.data-table .value-normal { color: #0f172a; }
+.data-table .value-high { color: #dc2626; font-weight: 700; }
+.data-table .value-empty { color: #cbd5e1; font-style: italic; }
+.data-table tfoot td { background: #fafbfc; font-size: 12px; color: #94a3b8; padding: 10px 16px; }
+
+/* 按钮系列 (阿里云风格渐变) */
+.btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all 0.25s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-primary { background: linear-gradient(135deg, #1677ff, #0958d9); color: #fff; box-shadow: 0 2px 6px rgba(22,119,255,0.2); }
+.btn-primary:hover { background: linear-gradient(135deg, #4096ff, #1677ff); box-shadow: 0 4px 12px rgba(22,119,255,0.3); transform: translateY(-1px); }
+
+/* 加载 */
+.loading-bar { height: 3px; background: #f1f5f9; overflow: hidden; }
+.loading-bar::after { content: ''; display: block; width: 40%; height: 100%; background: linear-gradient(90deg, #1677ff, #4096ff); animation: loading 1.5s ease-in-out infinite; border-radius: 2px; }
+@keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+.loading-bar.hide { display: none; }
+
+/* === 响应式 */
+.user-area { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
+.btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
+/* 响应式 */
+@media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar .sidebar-search { display: none; }
+    .sidebar .tree-item-all span:not(.tree-item-all-icon), .tree-group-title span:not(.arrow),
+    .tree-group-title .badge, .tree-cat, .tree-param, .sidebar-footer, .sidebar-header .version { display: none; }
+    .sidebar .tree-group-title { padding: 9px 8px; justify-content: center; }
+    .sidebar .tree-item-all { padding: 9px 8px; justify-content: center; }
+    .main { margin-left: 60px; }
+    .toolbar { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>DCS 分析平台</h2>
+        <div class="version">实时监控</div>
+    </div>
+
+    <div class="sidebar-search">
+        <input type="text" id="sidebarSearch" placeholder="搜索 TAG 或中文名..." onkeyup="filterTable()">
+    </div>
+
+    <div class="tree" id="treeNav"></div>
+
+    <div class="sidebar-footer" id="sidebarFooter"><span id="sidebarUser">admin</span> | <a style="cursor:pointer;color:rgba(255,255,255,0.7);text-decoration:none" onclick="doLogout()" href="javascript:void(0)">退出</a> | 默认: 全部设备</div>
+</div>
+
+<div class="main">
+    <div class="header">
+        <h1>实时数据监控</h1>
+        
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime" class="active">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/report">分析报告</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/knowledge-base">知识库</a>
+            <a href="/detect-config">检测规则</a>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <label class="toggle-label">
+            <span class="toggle-switch" id="toggleSwitch" onclick="toggleAutoRefresh()"></span>
+            <span>实时刷新</span>
+        </label>
+        <select class="refresh-select" id="refreshInterval" onchange="changeInterval()">
+            <option value="3">3 秒</option>
+            <option value="5" selected>5 秒</option>
+            <option value="10">10 秒</option>
+            <option value="30">30 秒</option>
+        </select>
+        <button class="btn btn-primary" onclick="fetchRealtime()">手动刷新</button>
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">在线</span>
+        <span class="timestamp" id="lastUpdate">--</span>
+    </div>
+
+    <div class="loading-bar" id="loadingBar"></div>
+
+    <div class="content">
+        <div class="table-wrap">
+            <table class="data-table" id="realtimeTable">
+                <thead>
+                    <tr>
+                        <th class="col-index">序号</th>
+                        <th class="col-tag">TAG名称</th>
+                        <th class="col-label">中文名称</th>
+                        <th class="col-value">最新值</th>
+                        <th class="col-time">更新时间</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+                <tfoot>
+                    <tr><td colspan="5" id="tableFooter">共 0 条记录</td></tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function checkLogin(){fetch('/api/user?token='+API_TOKEN).then(function(r){return r.json()}).then(function(d){if(!d.logged_in){window.location.href='/';}if(d.username){var el=document.getElementById('sidebarUser');if(el)el.textContent=d.username;};}).catch(function(){window.location.href='/';});}
+function doLogout(){fetch('/api/logout',{method:'POST'}).then(function(r){return r.json()}).then(function(d){window.location.href='/';});}
+const GROUPS = {{ groups_json | safe }};
+const LABELS = {{ labels_json | safe }};
+const API_TOKEN = "{{ app_token }}";
+checkLogin();
+const CAT_NAMES = {
+    remote_command: '遥控器指令', control_valve: '控制比例阀',
+    position: '位置状态', pressure: '压力状态',
+    control: '控制指令', safety: '安全状态', hydraulic: '液压参数'
+};
+let currentFilter = { type: 'group', value: 'all' };
+let autoRefreshTimer = null;
+let autoRefreshOn = false;
+let latestRows = [];
+
+// === 构建树形导航 ===
+function buildTree() {
+    const tree = document.getElementById('treeNav');
+    let html = `
+    <div class="tree-section-title">设备分组</div>
+    <div class="tree-item-all active" data-filter="all" onclick="clickGroup('all', this)">
+        全部设备
+    </div>`;
+
+    GROUPS.forEach(g => {
+        html += `<div class="tree-group">
+            <div class="tree-group-title" data-filter="${g.id}" onclick="clickGroup('${g.id}', this)">
+                <span class="arrow">▶</span>
+                ${g.name}
+                <span class="badge">${g.params.length}</span>
+            </div>
+            <div class="tree-items" id="items_${g.id}"></div>
+        </div>`;
+    });
+    tree.innerHTML = html;
+
+    // 构建每个组的子项
+    GROUPS.forEach(g => {
+        const div = document.getElementById('items_' + g.id);
+        let subHtml = '';
+        Object.entries(g.categories).forEach(([cat, params]) => {
+            subHtml += `<div class="tree-cat" data-group="${g.id}" data-cat="${cat}" onclick="clickCategory('${g.id}', '${cat}', this)">
+                ${CAT_NAMES[cat] || cat} (${params.length})
+            </div>`;
+            params.forEach(p => {
+                subHtml += `<div class="tree-param" data-group="${g.id}" data-param="${p}" onclick="clickParam('${p}', this)">
+                    ${LABELS[p] || p}
+                </div>`;
+            });
+        });
+        div.innerHTML = subHtml;
+    });
+
+    expandGroup('east_opener');
+}
+
+function expandGroup(groupId) {
+    const items = document.getElementById('items_' + groupId);
+    const title = document.querySelector(`.tree-group-title[data-filter="${groupId}"]`);
+    if (items && title) {
+        items.classList.add('show');
+        title.querySelector('.arrow').classList.add('open');
+    }
+}
+
+function toggleGroup(groupId) {
+    const items = document.getElementById('items_' + groupId);
+    const title = document.querySelector(`.tree-group-title[data-filter="${groupId}"]`);
+    if (items && title) {
+        items.classList.toggle('show');
+        title.querySelector('.arrow').classList.toggle('open');
+    }
+}
+
+function clearActive() {
+    document.querySelectorAll('.tree-item-all, .tree-group-title, .tree-cat, .tree-param')
+        .forEach(e => e.classList.remove('active'));
+}
+
+function setFooter(text) {
+    document.getElementById('sidebarFooter').textContent = text;
+}
+
+// === 三种点击行为：分组 / 分类 / 参数 ===
+
+function clickGroup(groupId, el) {
+    clearActive();
+    el.classList.add('active');
+    currentFilter = { type: 'group', value: groupId };
+
+    const name = groupId === 'all' ? '全部设备' :
+        (GROUPS.find(g => g.id === groupId)?.name || groupId);
+    setFooter('当前: ' + name);
+
+    // 如果点击设备组标题，同时展开/收起
+    if (el.classList.contains('tree-group-title')) {
+        toggleGroup(groupId);
+    }
+
+    doFetch();
+}
+
+function clickCategory(groupId, cat, el) {
+    clearActive();
+    el.classList.add('active');
+    currentFilter = { type: 'category', group: groupId, cat: cat };
+    setFooter('当前: ' + (CAT_NAMES[cat] || cat));
+    doFetch();
+}
+
+function clickParam(param, el) {
+    clearActive();
+    el.classList.add('active');
+    currentFilter = { type: 'param', value: param };
+    setFooter('当前: ' + (LABELS[param] || param));
+    doFetch();
+}
+
+// === 数据获取（拒绝 jQuery，原生 fetch） ===
+
+function doFetch() {
+    // 停止自动刷新计时器（防止堆积）
+    if (autoRefreshOn) startAutoRefresh();
+
+    document.getElementById('loadingBar').classList.remove('hide');
+
+    let url = '/api/realtime?group=all&token=' + API_TOKEN;
+    if (currentFilter.type === 'group' && currentFilter.value !== 'all') {
+        url = '/api/realtime?group=' + currentFilter.value + '&token=' + API_TOKEN;
+    } else if (currentFilter.type === 'param') {
+        url = '/api/realtime?param=' + encodeURIComponent(currentFilter.value) + '&token=' + API_TOKEN;
+    } else if (currentFilter.type === 'category') {
+        url = '/api/realtime?group=' + currentFilter.group + '&token=' + API_TOKEN;
+    }
+
+    fetch(url)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(data => {
+            document.getElementById('loadingBar').classList.add('hide');
+            if (data.error) {
+                document.getElementById('statusText').textContent = '错误: ' + data.error;
+                document.getElementById('statusDot').style.background = '#ff4d4f';
+                return;
+            }
+            document.getElementById('statusDot').style.background = '#52c41a';
+            document.getElementById('statusText').textContent = '在线';
+            const ts = data.timestamp ? data.timestamp.replace('T',' ').substring(0,19) : '';
+            document.getElementById('lastUpdate').textContent = '上次更新: ' + ts;
+
+            latestRows = data.rows || [];
+            renderTable(latestRows);
+        })
+        .catch(err => {
+            document.getElementById('loadingBar').classList.add('hide');
+            document.getElementById('statusDot').style.background = '#ff4d4f';
+            const msg = (err && err.message) || String(err);
+            document.getElementById('statusText').textContent = '错误: ' + msg;
+            console.error('fetch 错误:', err);
+        });
+}
+
+function fetchRealtime() {
+    doFetch();
+}
+
+function renderTable(rows) {
+    const tbody = document.getElementById('tableBody');
+    const searchVal = document.getElementById('sidebarSearch').value.toLowerCase().trim();
+
+    let filtered = rows;
+
+    // 分类筛选（如果 API 返回的是整个组的数据）
+    if (currentFilter.type === 'param') {
+        filtered = filtered.filter(r => r.param === currentFilter.value);
+    } else if (currentFilter.type === 'category') {
+        const g = GROUPS.find(x => x.id === currentFilter.group);
+        if (g && g.categories[currentFilter.cat]) {
+            const catParams = g.categories[currentFilter.cat];
+            filtered = filtered.filter(r => catParams.includes(r.param));
+        }
+    }
+
+    // 搜索文本筛选
+    if (searchVal) {
+        filtered = filtered.filter(r =>
+            r.param.toLowerCase().includes(searchVal) ||
+            (r.label || '').toLowerCase().includes(searchVal)
+        );
+    }
+
+    // 重新编号
+    filtered.forEach((r, i) => r.index = i + 1);
+
+    let html = '';
+    filtered.forEach(r => {
+        const t = r._time ? r._time.replace('T',' ').substring(0,19) : '--';
+        let valClass = 'value-normal';
+        let displayVal = r.value;
+        if (displayVal === '' || displayVal === null || displayVal === undefined) {
+            displayVal = '--';
+            valClass = 'value-empty';
+        } else if (typeof displayVal === 'number' && displayVal === 0) {
+            valClass = 'value-zero';
+            displayVal = '0.0000';
+        } else if (typeof displayVal === 'number') {
+            displayVal = Number(displayVal).toFixed(4);
+        }
+
+        html += `<tr>
+            <td class="col-index">${r.index}</td>
+            <td class="col-tag">${r.param}</td>
+            <td class="col-label">${r.label || r.param}</td>
+            <td class="col-value"><span class="${valClass}">${displayVal}</span></td>
+            <td class="col-time">${t}</td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = html;
+    document.getElementById('tableFooter').textContent =
+        `共 ${filtered.length} 条记录（筛选后 ${filtered.length} / 总计 ${rows.length}）`;
+}
+
+function filterTable() {
+    if (latestRows.length > 0) renderTable(latestRows);
+}
+
+// === 自动刷新 ===
+function toggleAutoRefresh() {
+    const sw = document.getElementById('toggleSwitch');
+    autoRefreshOn = !autoRefreshOn;
+    if (autoRefreshOn) {
+        sw.classList.add('on');
+        startAutoRefresh();
+    } else {
+        sw.classList.remove('on');
+        stopAutoRefresh();
+    }
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    const sec = parseInt(document.getElementById('refreshInterval').value) || 5;
+    autoRefreshTimer = setInterval(doFetch, sec * 1000);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+function changeInterval() {
+    if (autoRefreshOn) startAutoRefresh();
+}
+
+// === 初始化 ===
+buildTree();
+doFetch();
+</script>
+</body>
+</html>
