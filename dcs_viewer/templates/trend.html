@@ -101,6 +101,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .user-name { font-size: 13px; font-weight: 600; color: #1f2937; }
 .btn-logout { padding: 5px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; font-weight: 500; transition: all 0.2s; }
 .btn-logout:hover { border-color: #ff4d4f; color: #ff4d4f; background: #fff5f5; }
+
+@keyframes zoomBarPulse {
+    0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; }
+}
 </style>
 </head>
 <body>
@@ -180,6 +184,9 @@ checkLogin();
 const COLORS = ['#1677ff','#52c41a','#faad14','#ff4d4f','#722ed1','#13c2c2','#eb2f96','#fa8c16','#2f54eb','#a0d911','#f5222d','#1890ff','#fa541c','#9254de','#597ef7'];
 let selectedParams = [];
 let uplot = null;
+let _rawValues = [];
+let _queryStart = null, _queryEnd = null;  // 缓存的查询时间范围
+let _zoomTimer = null;                     // 防抖定时器
 
 // === 销毁图表 ===
 function destroyChart() {
@@ -420,10 +427,10 @@ function removeParam(idx) {
 }
 
 // === 查询 ===
-function doQuery() {
+function doQuery(customStart, customEnd) {
     if (selectedParams.length === 0) return;
-    const start = document.getElementById('startTime').value;
-    const end = document.getElementById('endTime').value;
+    const start = customStart || document.getElementById('startTime').value;
+    const end = customEnd || document.getElementById('endTime').value;
     if (!start || !end) return;
 
     const paramStr = selectedParams.map(s => s.param).join(',');
@@ -435,21 +442,37 @@ function doQuery() {
     fetch(url)
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
-            if (data.error) { alert(data.error); return; }
-            renderChart(data);
+            if (data.error) { alert(data.error); showZoomLoading(false); return; }
+            renderChart(data, customStart ? true : false);
+            showZoomLoading(false);
         })
         .catch(e => alert('请求失败: ' + e));
 }
 
 // === 渲染 uPlot 图表 ===
-function renderChart(data) {
-    destroyChart();
+function renderChart(data, isZoomRefetch) {
+    if (!isZoomRefetch) destroyChart();
+    else {
+        // 缩放刷新: 只替换数据,保留图表实例
+        if (!uplot) { destroyChart(); isZoomRefetch = false; }
+    }
 
     const cols = buildUplotData(data);
     if (!cols) return;
 
     // 缓存原始值（未偏移）供 tooltip 显示
     _rawValues = data.series.map(s => s.data.map(d => d.value));
+
+    // 缓存查询时间范围
+    if (data.query_range) {
+        _queryStart = new Date(data.query_range.start).getTime() / 1000;
+        _queryEnd = new Date(data.query_range.end).getTime() / 1000;
+    } else if (!isZoomRefetch) {
+        const s = document.getElementById('startTime').value;
+        const e = document.getElementById('endTime').value;
+        _queryStart = new Date(s).getTime() / 1000;
+        _queryEnd = new Date(e).getTime() / 1000;
+    }
 
     // 收集已使用的 Y 轴
     let usedAxes = new Set();
@@ -555,7 +578,23 @@ function renderChart(data) {
         scales: scales,
         axes: axes,
         series: series,
+        hooks: {
+            setScale: [(u, key) => { if (key === 'x') onZoom(u); }]
+        }
     };
+
+    if (isZoomRefetch && uplot) {
+        // 缩放刷新: 用 setData 替换数据，保持图表状态
+        uplot.setData(cols);
+        if (_rawValues) uplot.series.forEach((s, i) => {
+            if (i > 0 && i-1 < _rawValues.length) {
+                s._rawVals = _rawValues[i-1];
+            }
+        });
+        setupZoomIndicator();
+        buildLegend(data);
+        return;
+    }
 
     uplot = new uPlot(opts, cols, container);
 
@@ -641,6 +680,54 @@ function saveChartImage() {
     link.download = 'DCS趋势_' + new Date().toISOString().slice(0,10) + '.png';
     link.href = exportCanvas.toDataURL('image/png');
     link.click();
+}
+
+// === 缩放自适应刷新 ===
+let _lastZoomRange = null;
+
+function onZoom(u) {
+    if (!u || !u.data[0] || u.data[0].length < 2) return;
+    const visibleMin = u.posToVal(0, 'x');
+    const visibleMax = u.posToVal(u.bbox.width, 'x');
+
+    // 清除旧定时器, 300ms 防抖
+    if (_zoomTimer) clearTimeout(_zoomTimer);
+    _zoomTimer = setTimeout(() => refreshOnZoom(visibleMin, visibleMax), 300);
+}
+
+function refreshOnZoom(vmin, vmax) {
+    if (!_queryStart || !_queryEnd) return;
+    const queryRange = _queryEnd - _queryStart;
+    const zoomRange = vmax - vmin;
+
+    // 缩放比例 > 3x 或缩小 > 3x 时才刷新
+    const ratio = queryRange / Math.max(1, zoomRange);
+    if (ratio < 3 && ratio > 0.33) return;
+
+    // 构造新的查询时间范围 (加10% padding)
+    const pad = zoomRange * 0.1;
+    const newStart = new Date((vmin - pad) * 1000).toISOString().replace('.000','');
+    const newEnd = new Date((vmax + pad) * 1000).toISOString().replace('.000','');
+
+    // 避免频繁重复查询相同范围
+    const key = newStart + '|' + newEnd;
+    if (key === _lastZoomRange) return;
+    _lastZoomRange = key;
+
+    showZoomLoading(true);
+    doQuery(newStart, newEnd);
+}
+
+function showZoomLoading(show) {
+    let el = document.getElementById('zoomLoadBar');
+    if (!el && show) {
+        el = document.createElement('div');
+        el.id = 'zoomLoadBar';
+        el.style.cssText = 'position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#1677ff,#52c41a);animation:zoomBarPulse 1.5s infinite;z-index:100';
+        const area = document.getElementById('chartArea');
+        if (area) area.appendChild(el);
+    }
+    if (el && !show) setTimeout(() => { if (el.parentNode) el.remove(); }, 300);
 }
 
 // === 重置缩放 ===

@@ -1033,7 +1033,7 @@ def api_trend():
   |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
   |> filter(fn: (r) => r._field == "value")
   |> filter(fn: (r) => {param_filter})
-  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)'''
+  |> aggregateWindow(every: {window}, fn: last, createEmpty: false)'''
 
         tables = query_api.query(flux)
 
@@ -1064,7 +1064,11 @@ def api_trend():
                 "data": pts
             })
 
-        return jsonify({"series": result_series, "window": window})
+        return jsonify({
+            "series": result_series,
+            "window": window,
+            "query_range": {"start": s_utc, "end": e_utc}
+        })
     except Exception as e:
         return jsonify({"error": f"查询失败: {str(e)[:200]}"}), 500
 
@@ -1787,7 +1791,7 @@ def _fetch_cycle_data(start_utc, end_utc, params, window, timeout_ms=30000):
   |> filter(fn: (r) => r._measurement == "{INFLUX_MEASUREMENT}")
   |> filter(fn: (r) => r._field == "value")
   |> filter(fn: (r) => {param_filter})
-  |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)'''
+  |> aggregateWindow(every: {window}, fn: last, createEmpty: false)'''
 
         tables = query_api.query(flux)
         raw = {}
