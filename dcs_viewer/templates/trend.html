@@ -702,16 +702,19 @@ function refreshOnZoom(vmin, vmax) {
     if (ratio < 3 && ratio > 0.33) return;
 
     // 构造新的查询时间范围 (加10% padding)
-    // vmin/vmax 是 UTC epoch 秒 → 转为北京时间 (YYYY-MM-DDTHH:MM) 提供给后端
+    // vmin/vmax 是 UTC epoch 秒 → 转为北京时间 (YYYY-MM-DDTHH:MM:SS) 提供给后端
     const pad = zoomRange * 0.1;
     const epochToBJ = epoch => {
         const d = new Date(epoch * 1000 + 8 * 3600000); // UTC+8 北京时间
         const p = n => String(n).padStart(2,'0');
         return d.getUTCFullYear() + '-' + p(d.getUTCMonth()+1) + '-' + p(d.getUTCDate()) +
-               'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+               'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
     };
     const newStart = epochToBJ(vmin - pad);
     const newEnd = epochToBJ(vmax + pad);
+
+    // 避免 0 秒或负范围导致后端 400
+    if (newStart >= newEnd) return;
 
     // 避免频繁重复查询相同范围
     const key = newStart + '|' + newEnd;
