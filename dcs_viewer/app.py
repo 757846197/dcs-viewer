@@ -1036,7 +1036,9 @@ def api_trend():
 
     # 计算数据量，自动降采样
     time_diff_hours = (e_local - s_local).total_seconds() / 3600
-    if time_diff_hours <= 2:
+    if time_diff_hours <= 0.5:
+        window = "1s"
+    elif time_diff_hours <= 2:
         window = "10s"
     elif time_diff_hours <= 8:
         window = "30s"
