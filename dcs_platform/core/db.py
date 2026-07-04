@@ -231,6 +231,23 @@ def init_db():
         INSERT OR IGNORE INTO tuning_config(id) VALUES(1);
 
         -- 编码器校准表（动态基线/偏移校正）
+        CREATE TABLE IF NOT EXISTS variable_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tag_name TEXT NOT NULL UNIQUE,          -- InfluxDB 信号名 (LT_LQFC_XX)
+            chinese_name TEXT NOT NULL,              -- 中文名称
+            unit TEXT DEFAULT '',                    -- 单位 (mm, MPa, deg, etc.)
+            cycle_type TEXT NOT NULL DEFAULT 'common' CHECK(cycle_type IN ('opening','plugging','common')),
+            equipment TEXT DEFAULT '',               -- 所属设备: east_opener/west_opener/east_plugger/west_plugger
+            dimension TEXT DEFAULT '',               -- 维度分类: remote_command/control_valve/position/pressure/drill/impact/mud/hydraulic
+            data_type TEXT DEFAULT 'float' CHECK(data_type IN ('float','int','bool')),
+            description TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_varconfig_cycle ON variable_configs(cycle_type);
+        CREATE INDEX IF NOT EXISTS idx_varconfig_tag ON variable_configs(tag_name);
+
         CREATE TABLE IF NOT EXISTS encoder_calibration (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             machine TEXT NOT NULL UNIQUE,          -- 设备名: 东开口机/西开口机/东堵口机/西堵口机
@@ -994,6 +1011,181 @@ def upsert_encoder_calibration(machine, cycle_type, position_signal, offset_base
     conn.commit()
 
 
+# ========== 变量采集配置 ==========
+
+def get_variable_configs(cycle_type=None, equipment=None, dimension=None):
+    """获取变量配置列表，支持按类型/设备/维度过滤"""
+    q = "SELECT * FROM variable_configs WHERE is_active=1"
+    args = []
+    if cycle_type and cycle_type != "all":
+        q += " AND (cycle_type=? OR cycle_type='common')"
+        args.append(cycle_type)
+    if equipment:
+        q += " AND (equipment=? OR equipment='')"
+        args.append(equipment)
+    if dimension:
+        q += " AND dimension=?"
+        args.append(dimension)
+    q += " ORDER BY cycle_type, dimension, id"
+    rows = _get_conn().execute(q, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_variable_config(config_id):
+    r = _get_conn().execute("SELECT * FROM variable_configs WHERE id=?", (config_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def get_variable_config_by_tag(tag_name):
+    r = _get_conn().execute("SELECT * FROM variable_configs WHERE tag_name=?", (tag_name,)).fetchone()
+    return dict(r) if r else None
+
+
+def upsert_variable_config(config_id, tag_name, chinese_name, **kwargs):
+    """创建或更新变量配置"""
+    conn = _get_conn()
+    if config_id:
+        updates = ["tag_name=?", "chinese_name=?", "updated_at=datetime('now')"]
+        args = [tag_name, chinese_name]
+        for k in ("unit", "cycle_type", "equipment", "dimension", "data_type", "description", "is_active"):
+            if k in kwargs:
+                updates.append(f"{k}=?")
+                args.append(kwargs[k])
+        args.append(config_id)
+        conn.execute(f"UPDATE variable_configs SET {','.join(updates)} WHERE id=?", args)
+        conn.commit()
+        return config_id
+    else:
+        c = conn.execute(
+            """INSERT INTO variable_configs(tag_name,chinese_name,unit,cycle_type,equipment,dimension,data_type,description,is_active)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (tag_name, chinese_name,
+             kwargs.get("unit", ""), kwargs.get("cycle_type", "common"),
+             kwargs.get("equipment", ""), kwargs.get("dimension", ""),
+             kwargs.get("data_type", "float"), kwargs.get("description", ""),
+             kwargs.get("is_active", 1)))
+        conn.commit()
+        return c.lastrowid
+
+
+def delete_variable_config(config_id):
+    _get_conn().execute("DELETE FROM variable_configs WHERE id=?", (config_id,))
+    _get_conn().commit()
+
+
+def get_variable_config_options(cycle_type=None):
+    """获取下拉选择器选项: [{tag_name, chinese_name, unit}]"""
+    q = "SELECT tag_name, chinese_name, unit, dimension FROM variable_configs WHERE is_active=1"
+    args = []
+    if cycle_type and cycle_type != "all":
+        q += " AND (cycle_type=? OR cycle_type='common')"
+        args.append(cycle_type)
+    q += " ORDER BY dimension, chinese_name"
+    rows = _get_conn().execute(q, args).fetchall()
+    return [{"tag_name": r[0], "chinese_name": r[1], "unit": r[2], "dimension": r[3]} for r in rows]
+
+
+_VARIABLE_SEED = [
+    # === 东开口机 (opening / east_opener) ===
+    ("LT_LQFC_57", "东开口机选择", "", "opening", "east_opener", "remote_command", "bool"),
+    ("LT_LQFC_59", "回转进/退阀", "", "opening", "east_opener", "control_valve", "bool"),
+    ("LT_LQFC_60", "转钎正传/反转", "", "opening", "east_opener", "remote_command", "bool"),
+    ("LT_LQFC_61", "小车前进/后退阀", "", "opening", "east_opener", "control_valve", "bool"),
+    ("LT_LQFC_62", "挂钩/脱钩", "", "opening", "east_opener", "remote_command", "bool"),
+    ("LT_LQFC_63", "回转位置", "deg", "opening", "east_opener", "position", "float"),
+    ("LT_LQFC_64", "回转压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_65", "挂钩位置", "mm", "opening", "east_opener", "position", "float"),
+    ("LT_LQFC_66", "倾动压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_67", "推进位置", "mm", "opening", "east_opener", "position", "float"),
+    ("LT_LQFC_68", "推进压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_69", "冲击开/关", "", "opening", "east_opener", "remote_command", "bool"),
+    ("LT_LQFC_74", "回转回油压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_75", "倾动回油压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_85", "送给回油压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_86", "转钎回油压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_87", "转钎压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_88", "冲击压力", "MPa", "opening", "east_opener", "pressure", "float"),
+    ("LT_LQFC_89", "冲击回油压力", "MPa", "opening", "east_opener", "pressure", "float"),
+
+    # === 西开口机 (opening / west_opener) ===
+    ("LT_LQFC_94", "西开口机选择", "", "opening", "west_opener", "remote_command", "bool"),
+    ("LT_LQFC_96", "回转进/退阀", "", "opening", "west_opener", "control_valve", "bool"),
+    ("LT_LQFC_98", "小车前进/后退阀", "", "opening", "west_opener", "control_valve", "bool"),
+    ("LT_LQFC_100", "回转位置", "deg", "opening", "west_opener", "position", "float"),
+    ("LT_LQFC_101", "回转压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_103", "倾动压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_104", "推进位置", "mm", "opening", "west_opener", "position", "float"),
+    ("LT_LQFC_105", "推进压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_106", "冲击开/关", "", "opening", "west_opener", "remote_command", "bool"),
+    ("LT_LQFC_111", "回转回油压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_112", "倾动回油压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_122", "送给回油压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_124", "转钎压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_125", "冲击压力", "MPa", "opening", "west_opener", "pressure", "float"),
+    ("LT_LQFC_126", "冲击回油压力", "MPa", "opening", "west_opener", "pressure", "float"),
+
+    # === 东堵口机 (plugging / east_plugger) ===
+    ("LT_LQFC_129", "遥控电源", "", "plugging", "east_plugger", "remote_command", "bool"),
+    ("LT_LQFC_130", "遥控启动/停止", "", "plugging", "east_plugger", "remote_command", "bool"),
+    ("LT_LQFC_133", "回转进/退阀", "", "plugging", "east_plugger", "control_valve", "bool"),
+    ("LT_LQFC_134", "打泥前进/后退", "", "plugging", "east_plugger", "control_valve", "bool"),
+    ("LT_LQFC_135", "回转位置", "deg", "plugging", "east_plugger", "position", "float"),
+    ("LT_LQFC_136", "转炮压力", "MPa", "plugging", "east_plugger", "pressure", "float"),
+    ("LT_LQFC_137", "打泥位置", "mm", "plugging", "east_plugger", "position", "float"),
+    ("LT_LQFC_138", "打泥压力", "MPa", "plugging", "east_plugger", "pressure", "float"),
+    ("LT_LQFC_139", "退泥压力", "MPa", "plugging", "east_plugger", "pressure", "float"),
+    ("LT_LQFC_140", "退炮压力", "MPa", "plugging", "east_plugger", "pressure", "float"),
+    ("LT_LQFC_141", "SET/备用", "", "plugging", "east_plugger", "safety", "bool"),
+    ("LT_LQFC_142", "急停", "", "plugging", "east_plugger", "safety", "bool"),
+    ("LT_LQFC_143", "等待位置", "deg", "plugging", "east_plugger", "position", "float"),
+    ("LT_LQFC_144", "工作位置", "deg", "plugging", "east_plugger", "position", "float"),
+    ("LT_LQFC_179", "打泥量", "L", "plugging", "east_plugger", "mud", "float"),
+
+    # === 西堵口机 (plugging / west_plugger) ===
+    ("LT_LQFC_152", "遥控电源", "", "plugging", "west_plugger", "remote_command", "bool"),
+    ("LT_LQFC_153", "遥控启动/停止", "", "plugging", "west_plugger", "remote_command", "bool"),
+    ("LT_LQFC_156", "回转进/退阀", "", "plugging", "west_plugger", "control_valve", "bool"),
+    ("LT_LQFC_157", "打泥前进/后退", "", "plugging", "west_plugger", "control_valve", "bool"),
+    ("LT_LQFC_158", "回转位置", "deg", "plugging", "west_plugger", "position", "float"),
+    ("LT_LQFC_159", "转炮压力", "MPa", "plugging", "west_plugger", "pressure", "float"),
+    ("LT_LQFC_160", "打泥位置", "mm", "plugging", "west_plugger", "position", "float"),
+    ("LT_LQFC_161", "打泥压力", "MPa", "plugging", "west_plugger", "pressure", "float"),
+    ("LT_LQFC_162", "退泥压力", "MPa", "plugging", "west_plugger", "pressure", "float"),
+    ("LT_LQFC_163", "退炮压力", "MPa", "plugging", "west_plugger", "pressure", "float"),
+    ("LT_LQFC_164", "SET/备用", "", "plugging", "west_plugger", "safety", "bool"),
+    ("LT_LQFC_165", "急停", "", "plugging", "west_plugger", "safety", "bool"),
+    ("LT_LQFC_166", "等待位置", "deg", "plugging", "west_plugger", "position", "float"),
+    ("LT_LQFC_167", "工作位置", "deg", "plugging", "west_plugger", "position", "float"),
+    ("LT_LQFC_180", "打泥量", "L", "plugging", "west_plugger", "mud", "float"),
+
+    # === 公共信号 ===
+    ("LT_LQFC_150", "东液压站温度", "°C", "common", "", "hydraulic", "float"),
+    ("LT_LQFC_151", "东液压站压力", "MPa", "common", "", "hydraulic", "float"),
+    ("LT_LQFC_173", "西液压站温度", "°C", "common", "", "hydraulic", "float"),
+    ("LT_LQFC_174", "西液压站压力", "MPa", "common", "", "hydraulic", "float"),
+]
+
+
+def seed_variable_configs():
+    """初始化变量采集配置（已存在则跳过）"""
+    conn = _get_conn()
+    existing = conn.execute("SELECT COUNT(*) FROM variable_configs").fetchone()[0]
+    if existing > 0:
+        logger.info("variable_configs 已存在 %d 条记录，跳过种子", existing)
+        return
+    for tag, cname, unit, ctype, equip, dim, dtype in _VARIABLE_SEED:
+        try:
+            conn.execute(
+                """INSERT INTO variable_configs(tag_name,chinese_name,unit,cycle_type,equipment,dimension,data_type)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (tag, cname, unit, ctype, equip, dim, dtype))
+        except sqlite3.IntegrityError:
+            pass  # UNIQUE constraint
+    conn.commit()
+    logger.info("variable_configs 种子完成，共 %d 条", len(_VARIABLE_SEED))
+
+
 init_db()
 _migrate_result_judge_configs()
 seed_default_result_configs()
+seed_variable_configs()

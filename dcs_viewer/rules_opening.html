@@ -141,22 +141,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <script>
 var APP_TOKEN="{{ app_token }}";
 var CYCLE_TYPE="opening";
-var OPENING_PARAMS=[
-    {id:"LT_LQFC_68",label:"推进进油压力",unit:"MPa",dim:"push"},
-    {id:"LT_LQFC_85",label:"推进回油压力",unit:"MPa",dim:"push"},
-    {id:"LT_LQFC_67",label:"开口小车位移",unit:"mm",dim:"push"},
-    {id:"LT_LQFC_64",label:"回转进油压力",unit:"MPa",dim:"swing"},
-    {id:"LT_LQFC_74",label:"回转回油压力",unit:"MPa",dim:"swing"},
-    {id:"LT_LQFC_63",label:"大臂旋转角",unit:"°",dim:"swing"},
-    {id:"LT_LQFC_88",label:"冲击进油压力",unit:"MPa",dim:"impact"},
-    {id:"LT_LQFC_89",label:"冲击回油压力",unit:"MPa",dim:"impact"},
-    {id:"LT_LQFC_66",label:"倾动进油压力",unit:"MPa",dim:"tilt"},
-    {id:"LT_LQFC_75",label:"倾动回油压力",unit:"MPa",dim:"tilt"},
-    {id:"LT_LQFC_87",label:"转钎进油压力",unit:"MPa",dim:"drill"},
-    {id:"LT_LQFC_86",label:"转钎回油压力",unit:"MPa",dim:"drill"},
-    {id:"LT_LQFC_151",label:"液压站压力",unit:"MPa",dim:"hydraulic"},
-    {id:"LT_LQFC_150",label:"液压站温度",unit:"°C",dim:"hydraulic"}
-];
+var OPENING_PARAMS = [];
 var OPERATORS=[
     {id:"gt",label:"大于 (>)"},
     {id:"lt",label:"小于 (<)"},
@@ -168,9 +153,30 @@ var OPERATORS=[
     {id:"change_rate_lt",label:"变化率 <"}
 ];
 var editingGroupId=null;
+
+// 从变量配置 API 加载参数列表
+function loadVariableParams() {
+    return fetch('/api/analysis/variable-configs?type=opening&mode=options&token='+APP_TOKEN)
+        .then(function(r){return r.json()})
+        .then(function(d){
+            OPENING_PARAMS = (d.options||[]).map(function(v){
+                return {id:v.tag_name, label:v.chinese_name, unit:v.unit, dim:v.dimension};
+            });
+            console.log('加载了 '+OPENING_PARAMS.length+' 个开口变量');
+        })
+        .catch(function(e){
+            console.error('加载变量配置失败:', e);
+            // 兜底
+            OPENING_PARAMS = [
+                {id:"LT_LQFC_67",label:"推进位置",unit:"mm",dim:"position"},
+                {id:"LT_LQFC_68",label:"推进压力",unit:"MPa",dim:"pressure"},
+                {id:"LT_LQFC_69",label:"冲击开/关",unit:"",dim:"remote_command"}
+            ];
+        });
+}
 var ruleGroups=[];
 
-function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':pid}
+function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':'LT_LQFC_'+pid}
 function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textContent=msg;el.className='alert alert-'+cls;setTimeout(function(){el.className='alert';el.textContent=''},5000)}
 function showLoading(msg){document.getElementById('loadingMsg').textContent=msg||'加载中...';document.getElementById('loading').classList.add('show')}
 function hideLoading(){document.getElementById('loading').classList.remove('show')}
@@ -178,7 +184,10 @@ function hideLoading(){document.getElementById('loading').classList.remove('show
 function loadRuleGroups(){
     console.log("loadRuleGroups called, CYCLE_TYPE="+CYCLE_TYPE);
     showLoading('加载规则...');
-    fetch('/api/rules?cycle_type='+CYCLE_TYPE+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
+    // 先加载变量配置，再加载规则列表
+    loadVariableParams().then(function() {
+        return fetch('/api/rules?cycle_type='+CYCLE_TYPE+'&token='+APP_TOKEN);
+    }).then(function(r){return r.json()}).then(function(data){
         console.log("API response:",data); ruleGroups=data.groups||[]; console.log("loaded "+ruleGroups.length+" groups");
         renderRuleGroups();
         hideLoading();

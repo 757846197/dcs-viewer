@@ -502,6 +502,7 @@ function renderResultConfigs(){
 
 function openAddResultConfig(){
     var type = document.getElementById('fResultType').value;
+    loadVariableOptions(type);
     var catLabels = {success:'成功', fail:'失败', incomplete:'未完成', unfinished:'未完整', breakthrough:'钻透', depth:'铁口深度计算'};
     showResultForm(null, {name:'新判定规则', cycle_type:type, category:'success', params:[
         {param_name:'',value:0,unit:'',data_type:'float',range_min:0,range_max:100,label:'参数1',operator:'gt'}
@@ -510,7 +511,10 @@ function openAddResultConfig(){
 
 function openEditResultConfig(id){
     var c = resultConfigs.find(function(x){return x.id===id});
-    if(c) showResultForm(id, JSON.parse(JSON.stringify(c)));
+    if(c) {
+        loadVariableOptions(c.cycle_type);
+        showResultForm(id, JSON.parse(JSON.stringify(c)));
+    }
 }
 
 function showResultForm(id, cfg){
@@ -542,11 +546,19 @@ function renderResultParams(){
     var pdiv = document.getElementById('rfParams');
     if(!pdiv) return;
     var params = window._rfCfg ? (window._rfCfg.params || []) : [];
+    var varOpts = window._varOptions || [];
     var html = '';
     params.forEach(function(p,i){
+        // 构建参数下拉选项
+        var selOpts = '<option value="">-- 手动输入 --</option>';
+        varOpts.forEach(function(v){
+            var sel = (p.param_name === v.tag_name) ? ' selected' : '';
+            selOpts += '<option value="' + v.tag_name + '"' + sel + '>' + v.chinese_name + ' (' + v.tag_name + ') ' + (v.unit||'') + '</option>';
+        });
         html += '<div class="rule-item">';
         html += '<span>#'+(i+1)+'</span>';
-        html += '<div class="form-group" style="flex:1;min-width:100px"><label>参数名</label><input value="'+(p.param_name||'')+'" onchange="window._rfCfg.params['+i+'].param_name=this.value"></div>';
+        html += '<div class="form-group" style="flex:1.5;min-width:160px"><label>参数信号</label><select onchange="onResultParamSelect('+i+',this.value)">' + selOpts + '</select></div>';
+        html += '<div class="form-group" style="flex:0 0 130px"><label>参数名</label><input id="rpName'+i+'" value="'+(p.param_name||'')+'" onchange="window._rfCfg.params['+i+'].param_name=this.value"></div>';
         html += '<div class="form-group" style="flex:1;min-width:100px"><label>显示名</label><input value="'+(p.label||'')+'" onchange="window._rfCfg.params['+i+'].label=this.value"></div>';
         html += '<div class="form-group" style="flex:0 0 80px"><label>值</label><input type="number" step="0.01" value="'+p.value+'" onchange="window._rfCfg.params['+i+'].value=parseFloat(this.value)||0"></div>';
         html += '<div class="form-group" style="flex:0 0 60px"><label>单位</label><input value="'+(p.unit||'')+'" onchange="window._rfCfg.params['+i+'].unit=this.value"></div>';
@@ -554,6 +566,36 @@ function renderResultParams(){
         html += '</div>';
     });
     pdiv.innerHTML = html || '<div style="text-align:center;color:#94a3b8;padding:12px">暂无参数</div>';
+}
+
+// 变量下拉选择：选中后自动填充 param_name, label, unit
+function onResultParamSelect(idx, tagName) {
+    if (!tagName) return; // "手动输入"
+    var varOpts = window._varOptions || [];
+    var v = varOpts.find(function(x) { return x.tag_name === tagName; });
+    if (!v) return;
+    window._rfCfg.params[idx].param_name = v.tag_name;
+    window._rfCfg.params[idx].label = v.chinese_name;
+    window._rfCfg.params[idx].unit = v.unit;
+    // 同步 input 显示
+    var nameInput = document.getElementById('rpName'+idx);
+    if (nameInput) nameInput.value = v.tag_name;
+    // 更新 label 和 unit input
+    var row = nameInput ? nameInput.closest('.rule-item') : null;
+    if (row) {
+        var inputs = row.querySelectorAll('input');
+        if (inputs.length >= 3) inputs[1].value = v.chinese_name;
+        if (inputs.length >= 4) inputs[3].value = v.unit;
+    }
+}
+
+function loadVariableOptions(type) {
+    var qs = type ? '?type=' + type + '&mode=options' : '?mode=options';
+    _api('/api/analysis/variable-configs' + qs).then(function(d) {
+        window._varOptions = d.options || [];
+    }).catch(function() {
+        window._varOptions = [];
+    });
 }
 
 function addResultParam(){

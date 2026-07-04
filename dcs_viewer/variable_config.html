@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>变量采集配置 — DCS 分析平台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f7fa;color:#1f2937;display:flex;min-height:100vh}
+.sidebar{width:220px;min-width:220px;background:linear-gradient(180deg,#1a2744,#2d3f66);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sidebar-header{padding:24px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.sidebar-header h2{font-size:16px;font-weight:700}
+.sidebar-header .ver{font-size:10px;opacity:0.4;margin-top:3px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:600;border-left:3px solid transparent;color:rgba(255,255,255,0.65);text-decoration:none;transition:all 0.2s}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#fff}
+.nav-item.active{background:rgba(22,119,255,0.15);border-left-color:#1677ff;color:#fff}
+.nav-section{padding:6px 20px;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.3);font-weight:600}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.header{background:#fff;padding:14px 32px;display:flex;align-items:center;gap:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);position:sticky;top:0;z-index:50}
+.header h1{font-size:18px;font-weight:700}
+.header .badge{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff;font-size:10px;padding:2px 10px;border-radius:12px}
+.header .nav-links{margin-left:auto;display:flex;gap:6px}
+.header .nav-links a{padding:6px 16px;border-radius:6px;font-size:13px;text-decoration:none;color:#64748b;font-weight:500;transition:all 0.2s}
+.header .nav-links a:hover{background:#f0f5ff;color:#1677ff}
+.header .nav-links a.active{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.container{padding:24px 32px;max-width:1400px}
+.toolbar{background:#fff;border-radius:12px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.toolbar label{font-size:12px;color:#64748b;font-weight:600}
+.toolbar select,.toolbar input{padding:6px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;outline:none;background:#fff}
+.toolbar select:focus,.toolbar input:focus{border-color:#1677ff;box-shadow:0 0 0 2px rgba(22,119,255,0.1)}
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.04);overflow:hidden}
+.card-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:space-between;color:#0f172a}
+.card-body{padding:0;overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead{background:#f8fafc;position:sticky;top:0}
+th{padding:10px 16px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+td{padding:10px 16px;font-size:13px;border-bottom:1px solid #f1f5f9}
+tr:hover{background:#f0f5ff}
+.tag{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;display:inline-block}
+.tag-dim{background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe}
+.tag-type{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.tag-eq{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.btn{padding:7px 18px;border:none;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600;transition:all 0.25s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff}
+.btn-primary:hover{background:linear-gradient(135deg,#4096ff,#1677ff)}
+.btn-ghost{padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#64748b;font-weight:500}
+.btn-ghost:hover{border-color:#1677ff;color:#1677ff;background:#f0f5ff}
+.btn-danger{color:#dc2626;border-color:#fecaca}
+.btn-danger:hover{color:#dc2626;background:#fef2f2}
+.btn-sm{padding:4px 12px;font-size:11px}
+.alert{padding:12px 20px;border-radius:12px;margin-bottom:16px;font-size:13px;display:none}
+.alert-info{display:block;background:#eff6ff;border:1px solid #bfdbfe;color:#2563eb}
+.alert-error{display:block;background:#fef2f2;border:1px solid #fecaca;color:#dc2626}
+.alert-success{display:block;background:#f0fdf4;border:1px solid:#bbf7d0;color:#166534}
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:1000;justify-content:center;align-items:center;backdrop-filter:blur(2px)}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:16px;width:580px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.12)}
+.modal-header{padding:16px 24px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center}
+.modal-header h3{font-size:16px;font-weight:700}
+.modal-body{padding:24px}
+.modal-footer{padding:16px 24px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:12px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:#64748b;font-weight:600;margin-bottom:5px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;font-family:inherit}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:#1677ff;box-shadow:0 0 0 3px rgba(22,119,255,0.1)}
+.form-row{display:flex;gap:12px}
+.form-row .form-group{flex:1}
+@media(max-width:768px){.sidebar{width:60px;min-width:60px}.sidebar .nav-item span,.sidebar .nav-section{display:none}.main{margin-left:60px}.container{padding:16px}}
+</style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="sidebar-header"><h2>DCS 分析平台</h2><div class="ver">变量采集配置</div></div>
+    <div class="nav-section" style="padding-top:12px">导航</div>
+    <a class="nav-item" href="/">历史查询</a>
+    <a class="nav-item" href="/realtime">实时监控</a>
+    <a class="nav-item" href="/trend">趋势分析</a>
+    <a class="nav-item" href="/analysis">作业分析</a>
+    <a class="nav-item" href="/labeling">循环标注</a>
+    <a class="nav-item" href="/detect-config">检测规则</a>
+    <a class="nav-item" href="/rules/opening">开口规则</a>
+    <a class="nav-item" href="/rules/plugging">堵口规则</a>
+    <a class="nav-item active" href="/variable-config">变量配置</a>
+</div>
+<div class="main">
+    <div class="header">
+        <h1>📊 变量采集配置</h1>
+        <span class="badge">Signal Mapping</span>
+        <div class="nav-links">
+            <a href="/">历史查询</a>
+            <a href="/realtime">实时监控</a>
+            <a href="/trend">趋势分析</a>
+            <a href="/analysis">作业分析</a>
+            <a href="/labeling">循环标注</a>
+            <a href="/detect-config">检测规则</a>
+            <a href="/rules/opening">开口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
+            <a href="/variable-config" class="active">变量配置</a>
+        </div>
+    </div>
+    <div class="container">
+        <div id="alertBox" class="alert"></div>
+
+        <div class="toolbar">
+            <label>作业类型</label>
+            <select id="fType" onchange="loadConfigs()">
+                <option value="">全部</option>
+                <option value="opening">开口作业</option>
+                <option value="plugging">堵口作业</option>
+                <option value="common">公共信号</option>
+            </select>
+            <label>设备</label>
+            <select id="fEquip" onchange="loadConfigs()">
+                <option value="">全部设备</option>
+                <option value="east_opener">东开口机</option>
+                <option value="west_opener">西开口机</option>
+                <option value="east_plugger">东堵口机</option>
+                <option value="west_plugger">西堵口机</option>
+            </select>
+            <label>维度</label>
+            <select id="fDim" onchange="loadConfigs()">
+                <option value="">全部维度</option>
+                <option value="remote_command">遥控指令</option>
+                <option value="control_valve">控制比例阀</option>
+                <option value="position">位置反馈</option>
+                <option value="pressure">压力信号</option>
+                <option value="mud">打泥量</option>
+                <option value="hydraulic">液压站</option>
+                <option value="safety">安全信号</option>
+            </select>
+            <label>搜索</label>
+            <input id="fSearch" placeholder="tag名/中文名..." style="width:160px" oninput="filterTable()">
+            <button class="btn btn-primary" onclick="openEditModal()" style="margin-left:auto">+ 新增变量</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>变量映射列表 <span id="countBadge" style="font-size:11px;color:#94a3b8;font-weight:400"></span></span>
+            </div>
+            <div class="card-body">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:160px">Tag 名称</th>
+                            <th style="width:180px">中文名称</th>
+                            <th style="width:60px">单位</th>
+                            <th style="width:80px">作业类型</th>
+                            <th style="width:100px">设备</th>
+                            <th style="width:80px">维度</th>
+                            <th style="width:60px">数据类型</th>
+                            <th style="width:120px">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="modalTitle">新增变量配置</h3>
+            <button class="btn-ghost" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-row">
+                <div class="form-group"><label>Tag 名称 *</label><input id="efTag" placeholder="LT_LQFC_67"></div>
+                <div class="form-group"><label>中文名称 *</label><input id="efName" placeholder="推进位置"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>单位</label><input id="efUnit" placeholder="mm / MPa / deg / L"></div>
+                <div class="form-group"><label>数据类型</label><select id="efDtype"><option value="float">float</option><option value="int">int</option><option value="bool">bool</option></select></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>作业类型</label><select id="efCycle">
+                    <option value="common">公共 (common)</option>
+                    <option value="opening">开口作业 (opening)</option>
+                    <option value="plugging">堵口作业 (plugging)</option>
+                </select></div>
+                <div class="form-group"><label>所属设备</label><select id="efEquip">
+                    <option value="">无</option>
+                    <option value="east_opener">东开口机</option>
+                    <option value="west_opener">西开口机</option>
+                    <option value="east_plugger">东堵口机</option>
+                    <option value="west_plugger">西堵口机</option>
+                </select></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>信号维度</label><select id="efDim">
+                    <option value="">无</option>
+                    <option value="remote_command">遥控指令</option>
+                    <option value="control_valve">控制比例阀</option>
+                    <option value="position">位置反馈</option>
+                    <option value="pressure">压力信号</option>
+                    <option value="mud">打泥量</option>
+                    <option value="hydraulic">液压站</option>
+                    <option value="safety">安全信号</option>
+                </select></div>
+                <div class="form-group"><label>备注</label><input id="efDesc" placeholder="信号用途说明"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveConfig()">保存</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var APP_TOKEN = "{{ app_token }}";
+var allConfigs = [];
+var editingId = null;
+
+function api(path) {
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    return fetch('/api/analysis' + path + sep + 'token=' + APP_TOKEN).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t) });
+        return r.json();
+    });
+}
+
+function apiJson(path, method, data) {
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    return fetch('/api/analysis' + path + sep + 'token=' + APP_TOKEN, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t) });
+        return r.json();
+    });
+}
+
+function showAlert(msg, cls) {
+    var el = document.getElementById('alertBox');
+    el.textContent = msg;
+    el.className = 'alert alert-' + cls;
+    setTimeout(function() { el.className = 'alert'; el.textContent = ''; }, 5000);
+}
+
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function loadConfigs() {
+    var type = document.getElementById('fType').value;
+    var equip = document.getElementById('fEquip').value;
+    var dim = document.getElementById('fDim').value;
+    var params = [];
+    if (type) params.push('type=' + type);
+    if (equip) params.push('equipment=' + equip);
+    if (dim) params.push('dimension=' + dim);
+    var qs = params.length ? '?' + params.join('&') : '';
+
+    api('/variable-configs' + qs).then(function(d) {
+        allConfigs = d.configs || [];
+        document.getElementById('countBadge').textContent = '共 ' + allConfigs.length + ' 条';
+        filterTable();
+    }).catch(function(e) {
+        showAlert('加载失败: ' + e.message, 'error');
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#dc2626">加载失败</td></tr>';
+    });
+}
+
+function filterTable() {
+    var q = (document.getElementById('fSearch').value || '').toLowerCase();
+    var items = allConfigs;
+    if (q) {
+        items = allConfigs.filter(function(c) {
+            return (c.tag_name||'').toLowerCase().indexOf(q) >= 0 ||
+                   (c.chinese_name||'').toLowerCase().indexOf(q) >= 0;
+        });
+    }
+    renderTable(items);
+    document.getElementById('countBadge').textContent = '显示 ' + items.length + '/' + allConfigs.length + ' 条';
+}
+
+var cycleLabels = {opening:'开口', plugging:'堵口', common:'公共'};
+var equipLabels = {east_opener:'东开口机', west_opener:'西开口机', east_plugger:'东堵口机', west_plugger:'西堵口机'};
+var dimLabels = {remote_command:'遥控指令', control_valve:'控制阀', position:'位置', pressure:'压力', mud:'打泥量', hydraulic:'液压站', safety:'安全'};
+
+function renderTable(items) {
+    var html = '';
+    if (items.length === 0) {
+        html = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#94a3b8">暂无数据</td></tr>';
+    } else {
+        items.forEach(function(c) {
+            html += '<tr>';
+            html += '<td><code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px">' + escHtml(c.tag_name) + '</code></td>';
+            html += '<td><strong>' + escHtml(c.chinese_name) + '</strong></td>';
+            html += '<td>' + (c.unit ? '<span style="color:#64748b">' + escHtml(c.unit) + '</span>' : '-') + '</td>';
+            html += '<td><span class="tag tag-type">' + (cycleLabels[c.cycle_type] || c.cycle_type) + '</span></td>';
+            html += '<td>' + (equipLabels[c.equipment] || c.equipment || '-') + '</td>';
+            html += '<td><span class="tag tag-dim">' + (dimLabels[c.dimension] || c.dimension || '-') + '</span></td>';
+            html += '<td style="font-size:11px;color:#64748b">' + (c.data_type||'float') + '</td>';
+            html += '<td>';
+            html += '<button class="btn-ghost btn-sm" onclick="openEditModal(' + c.id + ')">编辑</button> ';
+            html += '<button class="btn-ghost btn-sm btn-danger" onclick="deleteConfig(' + c.id + ')">删除</button>';
+            html += '</td>';
+            html += '</tr>';
+        });
+    }
+    document.getElementById('tableBody').innerHTML = html;
+}
+
+function openEditModal(id) {
+    editingId = id || null;
+    if (id) {
+        var c = allConfigs.find(function(x) { return x.id === id; });
+        if (!c) return;
+        document.getElementById('modalTitle').textContent = '编辑: ' + c.tag_name;
+        document.getElementById('efTag').value = c.tag_name || '';
+        document.getElementById('efName').value = c.chinese_name || '';
+        document.getElementById('efUnit').value = c.unit || '';
+        document.getElementById('efDtype').value = c.data_type || 'float';
+        document.getElementById('efCycle').value = c.cycle_type || 'common';
+        document.getElementById('efEquip').value = c.equipment || '';
+        document.getElementById('efDim').value = c.dimension || '';
+        document.getElementById('efDesc').value = c.description || '';
+    } else {
+        document.getElementById('modalTitle').textContent = '新增变量配置';
+        document.getElementById('efTag').value = '';
+        document.getElementById('efName').value = '';
+        document.getElementById('efUnit').value = '';
+        document.getElementById('efDtype').value = 'float';
+        document.getElementById('efCycle').value = 'common';
+        document.getElementById('efEquip').value = '';
+        document.getElementById('efDim').value = '';
+        document.getElementById('efDesc').value = '';
+    }
+    document.getElementById('editModal').classList.add('show');
+}
+
+function closeModal() {
+    document.getElementById('editModal').classList.remove('show');
+    editingId = null;
+}
+
+function saveConfig() {
+    var tag = document.getElementById('efTag').value.trim();
+    var name = document.getElementById('efName').value.trim();
+    if (!tag || !name) { showAlert('Tag名称和中文名称不能为空', 'error'); return; }
+    var data = {
+        tag_name: tag,
+        chinese_name: name,
+        unit: document.getElementById('efUnit').value.trim(),
+        data_type: document.getElementById('efDtype').value,
+        cycle_type: document.getElementById('efCycle').value,
+        equipment: document.getElementById('efEquip').value,
+        dimension: document.getElementById('efDim').value,
+        description: document.getElementById('efDesc').value.trim()
+    };
+    var method = editingId ? 'PUT' : 'POST';
+    var path = editingId ? '/variable-configs/' + editingId : '/variable-configs';
+    apiJson(path, method, data).then(function(d) {
+        showAlert('保存成功', 'success');
+        closeModal();
+        loadConfigs();
+    }).catch(function(e) {
+        showAlert('保存失败: ' + e.message, 'error');
+    });
+}
+
+function deleteConfig(id) {
+    if (!confirm('确定删除此变量配置？')) return;
+    apiJson('/variable-configs/' + id, 'DELETE', {}).then(function() {
+        showAlert('已删除', 'success');
+        loadConfigs();
+    }).catch(function(e) {
+        showAlert('删除失败: ' + e.message, 'error');
+    });
+}
+
+// Init
+loadConfigs();
+</script>
+</body>
+</html>

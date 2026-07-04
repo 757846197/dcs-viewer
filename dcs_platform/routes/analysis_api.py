@@ -19,7 +19,9 @@ from dcs_platform.core.db import get_cycles, get_label_stats, export_labels, ins
     get_tuning_config, update_tuning_config, get_tuning_runs, get_tuning_run, \
     get_tuning_history, insert_tuning_run, insert_tuning_history, \
     get_result_judge_configs, get_result_judge_config, get_default_result_config, \
-    upsert_result_judge_config, toggle_result_judge_config, delete_result_judge_config
+    upsert_result_judge_config, toggle_result_judge_config, delete_result_judge_config, \
+    get_encoder_calibration, upsert_encoder_calibration
+from dcs_platform.services.dynamic_detector import DynamicBreakthroughDetector, run_dynamic_analysis
 from dcs_platform.services.group_service import (
     get_group_params, get_param_label, get_all_groups, get_group_by_id,
 )
@@ -232,6 +234,94 @@ def api_toggle_result_config(config_id):
 def api_delete_result_config(config_id):
     delete_result_judge_config(config_id)
     return jsonify({"ok": True})
+
+
+# ========== 变量采集配置 API ==========
+
+@analysis_bp.route("/variable-configs")
+def api_variable_configs():
+    """获取变量配置列表，支持按 cycle_type/dimension/filter 过滤"""
+    from dcs_platform.core.db import get_variable_configs, get_variable_config_options
+    cycle_type = request.args.get("type", "")
+    equipment = request.args.get("equipment", "")
+    dimension = request.args.get("dimension", "")
+    mode = request.args.get("mode", "")
+
+    if mode == "options":
+        # 仅返回下拉选项（精简字段）
+        options = get_variable_config_options(cycle_type or None)
+        return jsonify({"options": options})
+
+    configs = get_variable_configs(
+        cycle_type=cycle_type or None,
+        equipment=equipment or None,
+        dimension=dimension or None,
+    )
+    return jsonify({"configs": configs, "total": len(configs)})
+
+
+@analysis_bp.route("/variable-configs/<int:config_id>")
+def api_get_variable_config(config_id):
+    from dcs_platform.core.db import get_variable_config
+    cfg = get_variable_config(config_id)
+    if not cfg:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(cfg)
+
+
+@analysis_bp.route("/variable-configs", methods=["POST"])
+def api_create_variable_config():
+    from dcs_platform.core.db import upsert_variable_config
+    data = request.get_json(force=True, silent=True) or {}
+    tag_name = (data.get("tag_name") or "").strip()
+    chinese_name = (data.get("chinese_name") or "").strip()
+    if not tag_name or not chinese_name:
+        return jsonify({"error": "tag_name 和 chinese_name 不能为空"}), 400
+    kwargs = {
+        "unit": data.get("unit", ""),
+        "cycle_type": data.get("cycle_type", "common"),
+        "equipment": data.get("equipment", ""),
+        "dimension": data.get("dimension", ""),
+        "data_type": data.get("data_type", "float"),
+        "description": data.get("description", ""),
+        "is_active": data.get("is_active", 1),
+    }
+    new_id = upsert_variable_config(None, tag_name, chinese_name, **kwargs)
+    return jsonify({"ok": True, "id": new_id})
+
+
+@analysis_bp.route("/variable-configs/<int:config_id>", methods=["PUT"])
+def api_update_variable_config(config_id):
+    from dcs_platform.core.db import upsert_variable_config, get_variable_config
+    cfg = get_variable_config(config_id)
+    if not cfg:
+        return jsonify({"error": "not found"}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    tag_name = (data.get("tag_name") or cfg["tag_name"]).strip()
+    chinese_name = (data.get("chinese_name") or cfg["chinese_name"]).strip()
+    kwargs = {}
+    for k in ("unit", "cycle_type", "equipment", "dimension", "data_type", "description", "is_active"):
+        if k in data:
+            kwargs[k] = data[k]
+    upsert_variable_config(config_id, tag_name, chinese_name, **kwargs)
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/variable-configs/<int:config_id>", methods=["DELETE"])
+def api_delete_variable_config(config_id):
+    from dcs_platform.core.db import delete_variable_config
+    delete_variable_config(config_id)
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/variable-configs/seed", methods=["POST"])
+def api_reseed_variable_configs():
+    """重新从 param_groups.json 种子变量配置（开发调试用）"""
+    from dcs_platform.core.db import _get_conn, seed_variable_configs
+    _get_conn().execute("DELETE FROM variable_configs")
+    _get_conn().commit()
+    seed_variable_configs()
+    return jsonify({"ok": True, "message": "变量配置已重新种子"})
 
 
 @analysis_bp.route("/equipment")
@@ -1245,6 +1335,82 @@ def api_export():
         as_attachment=True,
         download_name=filename,
     )
+
+
+# ===================================================================
+#  编码器校准 & 动态钻透/深度计算 API
+# ===================================================================
+
+@analysis_bp.route("/encoder-calibration")
+def api_get_encoder_calib():
+    """GET /api/analysis/encoder-calibration?machine=&cycle_type="""
+    machine = request.args.get("machine", "")
+    cycle_type = request.args.get("cycle_type", "")
+    calibrations = get_encoder_calibration(machine or None, cycle_type or None)
+    return jsonify({"calibrations": calibrations, "count": len(calibrations)})
+
+
+@analysis_bp.route("/encoder-calibration", methods=["POST"])
+def api_upsert_encoder_calib():
+    """POST /api/analysis/encoder-calibration"""
+    data = request.get_json(silent=True) or {}
+    machine = data.get("machine", "").strip()
+    if not machine:
+        return jsonify({"error": "设备名不能为空"}), 400
+    upsert_encoder_calibration(
+        machine=machine,
+        cycle_type=data.get("cycle_type", "opening"),
+        position_signal=data.get("position_signal", ""),
+        offset_baseline=float(data.get("offset_baseline", 0)),
+        travel_range_min=float(data.get("travel_range_min", 0.1)),
+        travel_range_max=float(data.get("travel_range_max", 3.0)),
+        slope_correction=float(data.get("slope_correction", 1.0)),
+        description=data.get("description", ""),
+    )
+    return jsonify({"ok": True})
+
+
+@analysis_bp.route("/dynamic-analysis")
+def api_dynamic_analysis():
+    """GET /api/analysis/dynamic-analysis?start=...&end=...&type=...&machine=...
+    
+    动态钻透判定 + 铁口深度计算:
+    - 自动建立位置基线
+    - 编码器偏移校正
+    - 多维钻透判定（行程占比 + 速度拐点 + 位移稳定）
+    - 输出修正后铁口深度
+    """
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    cycle_type = request.args.get("type", "opening")
+    machine = request.args.get("machine", "东开口机")
+
+    if not start or not end:
+        return jsonify({"error": "缺少时间参数"}), 400
+
+    start = _normalize_time(start)
+    end = _normalize_time(end)
+
+    # 加载编码器校准
+    calibs = get_encoder_calibration(machine=machine)
+    calib = calibs[0] if calibs else {}
+
+    # 确定位置信号
+    MACHINE_SIGNALS = {
+        ("opening", "东开口机"): "LT_LQFC_67",
+        ("opening", "西开口机"): "LT_LQFC_104",
+        ("plugging", "东堵口机"): "LT_LQFC_137",
+        ("plugging", "西堵口机"): "LT_LQFC_160",
+    }
+    pos_signal = calib.get("position_signal") or MACHINE_SIGNALS.get(
+        (cycle_type, machine), ""
+    )
+
+    if not pos_signal:
+        return jsonify({"error": "未找到位置信号配置"}), 400
+
+    result = run_dynamic_analysis(start, end, cycle_type, pos_signal, calib, machine)
+    return jsonify(result)
 
 
 def register_routes(app):
