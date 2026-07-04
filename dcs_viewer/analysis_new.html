@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>炉前作业分析 — DCS</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4"></script>
+<script src="/static/lib/chart.umd.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; display: flex; min-height: 100vh; }
@@ -207,6 +207,25 @@ tr:hover { background: #f8fafc; }
                 <div class="chart-area"><canvas id="detailChart"></canvas></div>
             </div>
         </div>
+        <div class="card" id="trainingCard">
+            <div class="card-header">模型训练 <span style="font-size:11px;color:#94a3b8;font-weight:400" id="trainingStatus"></span></div>
+            <div class="card-body">
+                <div class="filter-bar">
+                    <div class="filter-group"><label>模型类型</label><select id="trainType"><option value="opening">开口</option><option value="plugging">堵口</option></select></div>
+                    <div class="filter-group"><label>CV 折数</label><select id="trainCV"><option>3</option><option selected>5</option><option>10</option></select></div>
+                    <div class="filter-group"><label>超参数 (JSON)</label><input id="trainParams" placeholder='{"num_leaves":31}' value='{}'></div>
+                    <button class="btn btn-primary" onclick="startTraining()" id="btnTrain">开始训练</button>
+                </div>
+                <div id="trainProgress" style="display:none;margin-top:16px">
+                    <div style="display:flex;align-items:center;gap:12px"><div style="flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden"><div id="trainBar" style="height:100%;background:linear-gradient(135deg,#1677ff,#52c41a);width:0;transition:width .5s;border-radius:4px"></div></div><span id="trainPct" style="font-size:13px;font-weight:600;color:#1677ff">0%</span></div>
+                    <div id="trainStep" style="font-size:12px;color:#64748b;margin-top:4px">...</div>
+                </div>
+                <div id="trainResult" style="display:none;margin-top:12px">
+                    <div class="stats-row"><div class="stat-card"><div class="stat-label">Best Score</div><div class="stat-value" id="trainScore" style="font-size:22px">-</div></div><div class="stat-card"><div class="stat-label">Samples</div><div class="stat-value" id="trainSamples" style="font-size:22px">-</div></div><div class="stat-card"><div class="stat-label">Features</div><div class="stat-value" id="trainFeatures" style="font-size:22px">-</div></div></div>
+                    <div class="card" style="margin-top:12px"><div class="card-header">特征重要性</div><div class="card-body"><canvas id="importanceChart" height="250"></canvas></div></div>
+                </div>
+            </div>
+        </div>
 
     </div>
 </div>
@@ -230,11 +249,15 @@ function getLabelMap(){
     return labels;
 }
 
+function fmtLocalDT(d){
+    var p = function(n){return String(n).padStart(2,'0');};
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+}
 function initDates(){
     var now = new Date();
-    var d1 = new Date(now.getTime() - 3*86400000);
-    document.getElementById('dEnd').value = now.toISOString().slice(0,16);
-    document.getElementById('dStart').value = d1.toISOString().slice(0,16);
+    var d7ago = new Date(now.getTime() - 7*86400000);
+    document.getElementById('dStart').value = fmtLocalDT(d7ago);
+    document.getElementById('dEnd').value = fmtLocalDT(now);
 }
 initDates();
 
@@ -337,7 +360,11 @@ function runAnalysis(){
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
         document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
-        showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+        if(globalCycles.length === 0){
+            showAlert('分析完成，未检测到作业周期。' + (data.hint || '请尝试调整日期范围（如选择 6月 中旬有历史数据）'), 'info');
+        } else {
+            showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+        }
     }).catch(function(e){
         showAlert('分析失败: '+e.message, 'error');
         hideLoading();
@@ -478,6 +505,55 @@ function loadDetailChart(c, metrics){
     }).catch(function(){});
 }
 
+
+var trainRunId = null; var trainPollTimer = null; var impChart = null;
+function startTraining(){
+    var ct = document.getElementById("trainType").value;
+    var cv = parseInt(document.getElementById("trainCV").value);
+    var params = {}; try { params = JSON.parse(document.getElementById("trainParams").value); } catch(e){}
+    document.getElementById("btnTrain").disabled = true;
+    document.getElementById("trainProgress").style.display = "";
+    document.getElementById("trainResult").style.display = "none";
+    document.getElementById("trainBar").style.width = "0%";
+    document.getElementById("trainPct").textContent = "0%";
+    document.getElementById("trainStep").textContent = "提交中...";
+    fetch("/api/training/run?token="+APP_TOKEN, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cycle_type:ct,cv_folds:cv,param_overrides:params})})
+    .then(function(r){return r.json()}).then(function(d){
+        if(d.error){showAlert(d.error,"error");document.getElementById("btnTrain").disabled=false;return}
+        trainRunId = d.run_id; pollTraining();
+    }).catch(function(e){showAlert("启动失败: "+e,"error");document.getElementById("btnTrain").disabled=false});
+}
+function pollTraining(){
+    if(trainPollTimer)clearInterval(trainPollTimer);
+    trainPollTimer = setInterval(function(){
+        if(!trainRunId){clearInterval(trainPollTimer);return}
+        fetch("/api/training/status/"+trainRunId+"?token="+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+            var pct = d.progress_pct||0;
+            document.getElementById("trainBar").style.width=pct+"%";
+            document.getElementById("trainPct").textContent=pct+"%";
+            document.getElementById("trainStep").textContent=(d.current_step||"")+" | "+d.status;
+            if(d.status==="completed"){clearInterval(trainPollTimer);document.getElementById("btnTrain").disabled=false;document.getElementById("trainingStatus").textContent="训练完成";showResult()}
+            else if(d.status==="failed"){clearInterval(trainPollTimer);document.getElementById("btnTrain").disabled=false;showAlert("训练失败: "+(d.error||""),"error")}
+        });
+    },1000);
+}
+function showResult(){
+    fetch("/api/training/importance/"+trainRunId+"?token="+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        if(!d.importance||!d.importance.length)return;
+        document.getElementById("trainResult").style.display="";
+        var top=d.importance.slice(0,10);
+        var ctx=document.getElementById("importanceChart").getContext("2d");
+        if(impChart)impChart.destroy();
+        impChart=new Chart(ctx,{type:"bar",data:{labels:top.map(function(x){return x.name.substring(0,25)}),datasets:[{label:"重要性",data:top.map(function(x){return x.importance}),backgroundColor:"#1677ff"}]},options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:"Gain"}}}}});
+    });
+    fetch("/api/training/runs?token="+APP_TOKEN).then(function(r){return r.json()}).then(function(d){
+        if(!d.runs||!d.runs.length)return;
+        var last=d.runs[0];
+        document.getElementById("trainScore").textContent=(last.best_score||0).toFixed(4);
+        document.getElementById("trainSamples").textContent=last.n_samples||"-";
+        document.getElementById("trainFeatures").textContent=last.n_features||"-";
+    });
+}
 function exportResult(){
     if(globalCycles.length===0){showAlert('没有可导出的数据，请先分析', 'error');return;}
     var start = document.getElementById('dStart').value;

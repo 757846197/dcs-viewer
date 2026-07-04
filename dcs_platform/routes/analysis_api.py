@@ -661,7 +661,8 @@ def api_cycles():
     return jsonify({
         "cycles": cycles[:limit],
         "count": len(cycles),
-        "saved_to_db": saved_count
+        "saved_to_db": saved_count,
+        "hint": "未检测到作业周期，请检查日期范围是否有DCS数据" if len(cycles) == 0 else ""
     })
 
 

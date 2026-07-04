@@ -305,8 +305,9 @@ function fmtLocalDT(d){
 }
 function initDates(){
     var now = new Date();
-    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    document.getElementById('dStart').value = fmtLocalDT(today);
+    // 默认最近7天(覆盖 DCS 历史数据范围)
+    var d7ago = new Date(now.getTime() - 7*86400000);
+    document.getElementById('dStart').value = fmtLocalDT(d7ago);
     document.getElementById('dEnd').value = fmtLocalDT(now);
     document.getElementById('queryTimeRange').textContent = '--';
 }
@@ -512,7 +513,8 @@ function runAnalysis(){
     }
     var diff =(new Date(end).getTime()-new Date(start).getTime())/3600000;
     if(diff > 24){
-        showAlert('时间跨度不能超过24小时，当前跨度 '+Math.round(diff)+' 小时', 'error');
+        showAlert('时间跨度不能超过24小时，当前跨度 '+Math.round(diff)+' 小时。请缩小范围。', 'error');
+        document.getElementById('btnAnalyze').disabled = false;
         return;
     }
     if(diff < 0){
@@ -550,7 +552,11 @@ function runAnalysis(){
         document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
         document.getElementById('queryTimeRange').textContent = '查询: '+start.replace('T',' ')+' ~ '+end.replace('T',' ');
-        showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+        if(globalCycles.length === 0){
+            showAlert('分析完成，未检测到作业周期。' + (data.hint || '请尝试调整日期范围（如选择 6月 中旬有历史数据）'), 'info');
+        } else {
+            showAlert('分析完成，检测到 '+globalCycles.length+' 个作业周期', 'info');
+        }
     }).catch(function(e){
         showAlert('分析失败: '+e.message, 'error');
         hideLoading();
