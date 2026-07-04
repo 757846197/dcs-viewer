@@ -284,6 +284,21 @@ app.config["COMPRESS_LEVEL"] = 6            # 压缩级别（1-9，6为平衡点
 # 北京时间 (UTC+8)
 LOCAL_OFFSET = timedelta(hours=8)
 
+def _parse_time(time_str):
+    """弹性解析 datetime-local 输入，支持:
+    - "2026-07-03T00:00"       (无秒数)
+    - "2026-07-03T00:00:00"    (带秒数)
+    - "2026-07-03T00:00:00.000" (带毫秒)
+    返回 datetime (naive, 本地时间)
+    """
+    time_str = time_str.strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(time_str, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"无法解析时间: {time_str}")
+
 # === API 访问认证 ===
 @app.before_request
 def _check_api_auth():
@@ -1003,13 +1018,13 @@ def api_trend():
 
     # 时间转 UTC（前端传北京时间）
     try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "时间格式错误"}), 400
+        s_local = _parse_time(start)
+        e_local = _parse_time(end)
+    except ValueError as e:
+        return jsonify({"error": f"时间格式错误: {e}"}), 400
 
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # 计算数据量，自动降采样
     time_diff_hours = (e_local - s_local).total_seconds() / 3600
@@ -1092,13 +1107,13 @@ def api_trend_events():
         return jsonify({"error": "缺少时间参数"}), 400
 
     try:
-        s_local = datetime.strptime(start, "%Y-%m-%dT%H:%M")
-        e_local = datetime.strptime(end, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return jsonify({"error": "时间格式错误"}), 400
+        s_local = _parse_time(start)
+        e_local = _parse_time(end)
+    except ValueError as e:
+        return jsonify({"error": f"时间格式错误: {e}"}), 400
 
-    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
-    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:00Z")
+    s_utc = (s_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
+    e_utc = (e_local - LOCAL_OFFSET).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # 事件配置: {设备名: {remote: 遥控参数, position: 位置参数, threshold: 到位阈值}}
     EVENT_CONFIG = {

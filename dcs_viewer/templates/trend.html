@@ -437,7 +437,7 @@ function doQuery(customStart, customEnd) {
                 '&token=' + API_TOKEN;
 
     fetch(url)
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }); return r.json(); })
         .then(data => {
             if (data.error) { alert(data.error); showZoomLoading(false); return; }
             renderChart(data, customStart ? true : false);
@@ -794,7 +794,7 @@ function fetchEvents() {
     sel.innerHTML = '<option value="">检测中...</option>';
 
     fetch(url)
-        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }); return r.json(); })
         .then(data => {
             if (data.error) { alert(data.error); return; }
             currentEvents = data.events;
