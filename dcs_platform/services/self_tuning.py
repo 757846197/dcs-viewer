@@ -230,35 +230,36 @@ def _derive_judge_params(cycle_type: str, analysis: dict, collect: dict) -> dict
     suggestions = {}
 
     if cycle_type == "opening":
-        # 推进位移阈值: 取 P50 的 1.5 倍（代表显著变化）
+        # 推进位置位移 (LT_LQFC_67): 取 P50 的 1.5 倍作为有效钻进阈值
         push_keys = [k for k in features if "67" in k or "104" in k]
         if push_keys:
             f = features[push_keys[0]]
-            suggestions["push_pos_change"] = {"param_name": "push_pos_change",
-                "label": "推进位移骤增阈值", "suggested": round(f["p50"] * 1.5, 3) if f["p50"] > 0 else 0.1,
-                "current": 0.1, "unit": "m", "reason": f"基于历史位移P50={f['p50']:.3f}m"}
-        # 压力骤降阈值: 取 std/mean 比
+            suggested_val = round(f["p50"] * 1.5, 3) if f["p50"] > 0 else 0.5
+            suggestions["LT_LQFC_67_depth"] = {"param_name": "LT_LQFC_67",
+                "label": "推进位置位移阈值", "suggested": suggested_val,
+                "current": 0.5, "unit": "m", "reason": f"基于历史位移P50={f['p50']:.3f}m"}
+        # 推进压力骤降比 (LT_LQFC_68): 取 std/mean 比
         press_keys = [k for k in features if "68" in k or "105" in k]
         if press_keys:
             f = features[press_keys[0]]
             ratio = min(0.5, max(0.1, f["std"] / max(1, f["mean"])))
-            suggestions["push_press_drop_ratio"] = {"param_name": "push_press_drop_ratio",
-                "label": "压力骤降阈值", "suggested": round(ratio, 2),
-                "current": 0.2, "unit": "%", "reason": f"基于压力波动std/mean={ratio:.2f}"}
+            suggestions["LT_LQFC_68_drop"] = {"param_name": "LT_LQFC_68",
+                "label": "推进压力骤降比阈值", "suggested": round(ratio, 2),
+                "current": 0.15, "unit": "ratio", "reason": f"基于压力波动std/mean={ratio:.2f}"}
 
     else:
-        # 堵口: 打泥量达标值
+        # 堵口: 打泥量达标值 (LT_LQFC_179)
         mud_keys = [k for k in features if "179" in k or "180" in k]
         if mud_keys:
             f = features[mud_keys[0]]
             suggested = max(50, round(f["p90"] * 0.8))
-            suggestions["mud_qty_min"] = {"param_name": "mud_qty_min",
-                "label": "打泥量达标值", "suggested": suggested,
-                "current": 100, "unit": "kg", "reason": f"基于历史P90={f['p90']:.0f}kg"}
-        # 保压时间
-        suggestions["hold_duration_min"] = {"param_name": "hold_duration_min",
-            "label": "保压时间下限", "suggested": 60,
-            "current": 60, "unit": "s", "reason": "保持默认"}
+            suggestions["LT_LQFC_179_qty"] = {"param_name": "LT_LQFC_179",
+                "label": "打泥总量达标值", "suggested": suggested,
+                "current": 100, "unit": "L", "reason": f"基于历史P90={f['p90']:.0f}L"}
+        # 保压时间 (LT_LQFC_134 指令持续时间)
+        suggestions["LT_LQFC_134_hold"] = {"param_name": "LT_LQFC_134",
+            "label": "保压时长下限", "suggested": 60,
+            "current": 60, "unit": "s", "reason": "基于指令持续时长统计"}
 
     return {"type": cycle_type, "suggestions": suggestions}
 

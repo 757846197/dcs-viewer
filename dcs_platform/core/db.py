@@ -230,6 +230,30 @@ def init_db():
 
         INSERT OR IGNORE INTO tuning_config(id) VALUES(1);
 
+        -- 编码器校准表（动态基线/偏移校正）
+        CREATE TABLE IF NOT EXISTS encoder_calibration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine TEXT NOT NULL UNIQUE,          -- 设备名: 东开口机/西开口机/东堵口机/西堵口机
+            cycle_type TEXT NOT NULL,              -- opening/plugging
+            position_signal TEXT NOT NULL,          -- 小车位置信号名
+            offset_baseline REAL DEFAULT 0.0,      -- 编码器偏移基线（m）
+            travel_range_min REAL DEFAULT 0.0,     -- 最小有效行程（m）
+            travel_range_max REAL DEFAULT 3.0,     -- 最大有效行程（m）
+            slope_correction REAL DEFAULT 1.0,     -- 斜率修正系数（编码器比例误差）
+            last_calibrated_at TEXT,
+            description TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        -- 默认编码器校准
+        INSERT OR IGNORE INTO encoder_calibration(machine, cycle_type, position_signal, offset_baseline, travel_range_min, travel_range_max)
+        VALUES
+            ('东开口机', 'opening', 'LT_LQFC_67', 0.0, 0.1, 2.5),
+            ('西开口机', 'opening', 'LT_LQFC_104', 0.0, 0.1, 2.5),
+            ('东堵口机', 'plugging', 'LT_LQFC_137', 0.0, 0.1, 2.0),
+            ('西堵口机', 'plugging', 'LT_LQFC_160', 0.0, 0.1, 2.0);
+
         -- 模型训练记录
         CREATE TABLE IF NOT EXISTS model_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -664,64 +688,74 @@ def delete_detect_config(config_id):
 # ===================================================================
 
 _DEFAULT_RESULT_PARAMS = {
+    # === 开口作业判定规则 ===
+    # 信号源: 东开口机 LT_LQFC_57~89, 西开口机 LT_LQFC_94~125
+    # 核心信号: 67=推进位置(行程), 68=推进压力, 69=冲击指令, 63=回转位置
     "opening": {
         "success": {"name": "开口成功判定", "logic": "AND", "params": [
-            {"param_name": "push_pos_change", "value": 0.1, "unit": "m", "data_type": "float",
-             "range_min": 0.01, "range_max": 0.5, "label": "推进位移骤增阈值", "operator": "gt"},
-            {"param_name": "push_press_drop_ratio", "value": 0.2, "unit": "%", "data_type": "float",
-             "range_min": 0.05, "range_max": 0.5, "label": "压力骤降阈值", "operator": "gt"},
+            {"param_name": "LT_LQFC_67", "value": 0.5, "unit": "m", "data_type": "float",
+             "range_min": 0.1, "range_max": 2.0, "label": "推进位置位移量 (max-min)", "operator": "gte"},
+            {"param_name": "LT_LQFC_68", "value": 0.15, "unit": "ratio", "data_type": "float",
+             "range_min": 0.05, "range_max": 0.5, "label": "推进压力骤降比 (晚期/早期)", "operator": "lt"},
         ]},
         "fail": {"name": "开口失败判定", "logic": "AND", "params": [
-            {"param_name": "no_effective_drill", "value": 1, "unit": "", "data_type": "bool",
-             "range_min": 0, "range_max": 1, "label": "无有效钻进位移", "operator": "eq"},
+            {"param_name": "LT_LQFC_67", "value": 0.1, "unit": "m", "data_type": "float",
+             "range_min": 0.01, "range_max": 0.3, "label": "推进位置位移上限 (无有效钻进)", "operator": "lt"},
         ]},
         "incomplete": {"name": "开口未完成判定", "logic": "AND", "params": [
-            {"param_name": "has_drill_no_breakthrough", "value": 1, "unit": "", "data_type": "bool",
-             "range_min": 0, "range_max": 1, "label": "有钻进但未钻透", "operator": "eq"},
+            {"param_name": "LT_LQFC_67", "value": 0.1, "unit": "m", "data_type": "float",
+             "range_min": 0.05, "range_max": 1.0, "label": "推进位置位移下限 (有钻进)", "operator": "gte"},
+            {"param_name": "LT_LQFC_68", "value": 0.15, "unit": "ratio", "data_type": "float",
+             "range_min": 0.05, "range_max": 0.5, "label": "推进压力骤降比 (未达标,未钻透)", "operator": "gte"},
         ]},
         "breakthrough": {"name": "钻透判定", "logic": "AND", "params": [
-            {"param_name": "drill_pos_reach", "value": 1.5, "unit": "m", "data_type": "float",
-             "range_min": 0.5, "range_max": 3.0, "label": "钻头到位深度", "operator": "gte"},
-            {"param_name": "impact_press_drop", "value": 5.0, "unit": "MPa", "data_type": "float",
-             "range_min": 2.0, "range_max": 20.0, "label": "冲击压力骤降", "operator": "lt"},
+            {"param_name": "LT_LQFC_67", "value": 0.6, "unit": "ratio", "data_type": "float",
+             "range_min": 0.3, "range_max": 0.95, "label": "推进行程占比 (实际/全量程)", "operator": "gte"},
+            {"param_name": "LT_LQFC_68", "value": 0.2, "unit": "ratio", "data_type": "float",
+             "range_min": 0.1, "range_max": 0.5, "label": "推进压力骤降比 (晚期/早期≤20%)", "operator": "lt"},
+            {"param_name": "LT_LQFC_69", "value": 1, "unit": "bool", "data_type": "int",
+             "range_min": 0, "range_max": 1, "label": "冲击指令已激活", "operator": "eq"},
         ]},
         "depth": {"name": "铁口深度计算", "logic": "AND", "params": [
-            {"param_name": "opening_duration_min", "value": 60, "unit": "s", "data_type": "int",
-             "range_min": 30, "range_max": 300, "label": "最小开口时长", "operator": "gte"},
-            {"param_name": "push_total_distance", "value": 1.0, "unit": "m", "data_type": "float",
-             "range_min": 0.5, "range_max": 2.5, "label": "推进总行程", "operator": "gte"},
-            {"param_name": "depth_ratio", "value": 0.8, "unit": "", "data_type": "float",
-             "range_min": 0.5, "range_max": 1.0, "label": "深度达标比例", "operator": "gte"},
+            {"param_name": "LT_LQFC_67", "value": 1.0, "unit": "m", "data_type": "float",
+             "range_min": 0.5, "range_max": 3.0, "label": "推进有效行程下限 (max-基线)", "operator": "gte"},
+            {"param_name": "LT_LQFC_63", "value": 30, "unit": "deg", "data_type": "float",
+             "range_min": 10, "range_max": 90, "label": "大臂到位角度上限", "operator": "lt"},
+            {"param_name": "encoder_offset_calib", "value": 1, "unit": "bool", "data_type": "int",
+             "range_min": 0, "range_max": 1, "label": "编码器偏移自动校正", "operator": "eq"},
         ]},
     },
+    # === 堵口作业判定规则 ===
+    # 信号源: 东堵口机 LT_LQFC_129~151,179, 西堵口机 LT_LQFC_152~167,180
+    # 核心信号: 179/180=打泥量, 138/161=打泥压力, 137/160=打泥位置(行程), 134/157=打泥指令
     "plugging": {
         "success": {"name": "堵口成功判定", "logic": "AND", "params": [
-            {"param_name": "mud_qty_min", "value": 100, "unit": "kg", "data_type": "float",
-             "range_min": 50, "range_max": 500, "label": "打泥量达标值", "operator": "gte"},
-            {"param_name": "hold_duration_min", "value": 60, "unit": "s", "data_type": "int",
-             "range_min": 30, "range_max": 300, "label": "保压时间下限", "operator": "gte"},
+            {"param_name": "LT_LQFC_179", "value": 100, "unit": "L", "data_type": "float",
+             "range_min": 50, "range_max": 500, "label": "打泥总量 (max-min)", "operator": "gte"},
+            {"param_name": "LT_LQFC_134", "value": 60, "unit": "s", "data_type": "int",
+             "range_min": 30, "range_max": 300, "label": "保压时长下限", "operator": "gte"},
         ]},
         "fail": {"name": "堵口失败判定", "logic": "AND", "params": [
-            {"param_name": "mud_qty_below_min", "value": 1, "unit": "", "data_type": "bool",
-             "range_min": 0, "range_max": 1, "label": "打泥量未达标", "operator": "eq"},
+            {"param_name": "LT_LQFC_179", "value": 50, "unit": "L", "data_type": "float",
+             "range_min": 10, "range_max": 200, "label": "打泥量下限 (严重不足)", "operator": "lt"},
         ]},
         "unfinished": {"name": "堵口未完整判定", "logic": "AND", "params": [
-            {"param_name": "mud_done_hold_short", "value": 1, "unit": "", "data_type": "bool",
-             "range_min": 0, "range_max": 1, "label": "打泥完成但保压不足", "operator": "eq"},
+            {"param_name": "LT_LQFC_179", "value": 50, "unit": "L", "data_type": "float",
+             "range_min": 10, "range_max": 200, "label": "打泥量下限 (部分完成)", "operator": "gte"},
+            {"param_name": "LT_LQFC_134", "value": 60, "unit": "s", "data_type": "int",
+             "range_min": 10, "range_max": 300, "label": "保压时长上限 (不足)", "operator": "lt"},
         ]},
-        "breakthrough": {"name": "钻透判定", "logic": "AND", "params": [
-            {"param_name": "mud_press_peak", "value": 15.0, "unit": "MPa", "data_type": "float",
+        "breakthrough": {"name": "钻透判定 (泥炮到位)", "logic": "AND", "params": [
+            {"param_name": "LT_LQFC_137", "value": 0.8, "unit": "ratio", "data_type": "float",
+             "range_min": 0.5, "range_max": 1.0, "label": "打泥位置到位比 (行程/工作位)", "operator": "gte"},
+            {"param_name": "LT_LQFC_138", "value": 15.0, "unit": "MPa", "data_type": "float",
              "range_min": 5.0, "range_max": 30.0, "label": "打泥压力峰值", "operator": "gte"},
-            {"param_name": "mud_qty_total", "value": 80, "unit": "kg", "data_type": "float",
-             "range_min": 30, "range_max": 300, "label": "堵口打泥总量", "operator": "gte"},
         ]},
-        "depth": {"name": "铁口深度计算", "logic": "AND", "params": [
-            {"param_name": "plugging_duration_min", "value": 45, "unit": "s", "data_type": "int",
-             "range_min": 20, "range_max": 180, "label": "最小堵口时长", "operator": "gte"},
-            {"param_name": "mud_flow_total", "value": 60, "unit": "kg", "data_type": "float",
-             "range_min": 20, "range_max": 200, "label": "总打泥流量", "operator": "gte"},
-            {"param_name": "depth_ratio", "value": 0.75, "unit": "", "data_type": "float",
-             "range_min": 0.5, "range_max": 1.0, "label": "深度达标比例", "operator": "gte"},
+        "depth": {"name": "铁口深度计算 (堵口)", "logic": "AND", "params": [
+            {"param_name": "LT_LQFC_137", "value": 100, "unit": "mm", "data_type": "float",
+             "range_min": 50, "range_max": 500, "label": "打泥行程下限 (max-基线)", "operator": "gte"},
+            {"param_name": "LT_LQFC_138", "value": 10.0, "unit": "MPa", "data_type": "float",
+             "range_min": 5.0, "range_max": 25.0, "label": "打泥平均压力下限", "operator": "gte"},
         ]},
     }
 }
@@ -918,6 +952,47 @@ def _migrate_result_judge_configs():
     conn.execute("INSERT INTO result_judge_configs SELECT * FROM result_judge_configs_old")
     conn.execute("DROP TABLE result_judge_configs_old")
     conn.commit()
+
+# ===================================================================
+#  编码器校准 CRUD
+# ===================================================================
+
+def get_encoder_calibration(machine=None, cycle_type=None):
+    q = "SELECT * FROM encoder_calibration WHERE 1=1"
+    args = []
+    if machine:
+        q += " AND machine=?"; args.append(machine)
+    if cycle_type:
+        q += " AND cycle_type=?"; args.append(cycle_type)
+    rows = _get_conn().execute(q, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_encoder_calibration(machine, cycle_type, position_signal, offset_baseline,
+                                travel_range_min=0.0, travel_range_max=3.0,
+                                slope_correction=1.0, description=""):
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT id FROM encoder_calibration WHERE machine=?", (machine,)
+    ).fetchone()
+    if existing:
+        conn.execute("""UPDATE encoder_calibration SET
+            cycle_type=?, position_signal=?, offset_baseline=?,
+            travel_range_min=?, travel_range_max=?, slope_correction=?,
+            description=?, last_calibrated_at=datetime('now'),
+            updated_at=datetime('now')
+            WHERE machine=?""",
+            (cycle_type, position_signal, offset_baseline, travel_range_min,
+             travel_range_max, slope_correction, description, machine))
+    else:
+        conn.execute("""INSERT INTO encoder_calibration
+            (machine, cycle_type, position_signal, offset_baseline,
+             travel_range_min, travel_range_max, slope_correction, description)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (machine, cycle_type, position_signal, offset_baseline,
+             travel_range_min, travel_range_max, slope_correction, description))
+    conn.commit()
+
 
 init_db()
 _migrate_result_judge_configs()
