@@ -286,15 +286,23 @@ LOCAL_OFFSET = timedelta(hours=8)
 
 def _parse_time(time_str):
     """弹性解析 datetime-local 输入，支持:
-    - "2026-07-03T00:00"       (无秒数)
-    - "2026-07-03T00:00:00"    (带秒数)
-    - "2026-07-03T00:00:00.000" (带毫秒)
-    返回 datetime (naive, 本地时间)
+    - "2026-07-03T00:00"          (无秒数, 北京时间)
+    - "2026-07-03T00:00:00"       (带秒数, 北京时间)
+    - "2026-07-03T00:00:00.000"   (带毫秒, 北京时间)
+    - "2026-07-03T00:00:00.000Z"  (带毫秒 + Z, UTC时间)
+    - "2026-07-03T00:00:00Z"      (带秒数 + Z, UTC时间)
+    返回 datetime (naive, 北京时间)
     """
     time_str = time_str.strip()
+    is_utc = time_str.endswith("Z")
+    if is_utc:
+        time_str = time_str[:-1]  # 剥掉 Z
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
         try:
-            return datetime.strptime(time_str, fmt)
+            dt = datetime.strptime(time_str, fmt)
+            if is_utc:
+                dt = dt + LOCAL_OFFSET  # UTC → 北京时间
+            return dt
         except ValueError:
             continue
     raise ValueError(f"无法解析时间: {time_str}")

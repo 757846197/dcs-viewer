@@ -702,9 +702,16 @@ function refreshOnZoom(vmin, vmax) {
     if (ratio < 3 && ratio > 0.33) return;
 
     // 构造新的查询时间范围 (加10% padding)
+    // vmin/vmax 是 UTC epoch 秒 → 转为北京时间 (YYYY-MM-DDTHH:MM) 提供给后端
     const pad = zoomRange * 0.1;
-    const newStart = new Date((vmin - pad) * 1000).toISOString().replace('.000','');
-    const newEnd = new Date((vmax + pad) * 1000).toISOString().replace('.000','');
+    const epochToBJ = epoch => {
+        const d = new Date(epoch * 1000 + 8 * 3600000); // UTC+8 北京时间
+        const p = n => String(n).padStart(2,'0');
+        return d.getUTCFullYear() + '-' + p(d.getUTCMonth()+1) + '-' + p(d.getUTCDate()) +
+               'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+    };
+    const newStart = epochToBJ(vmin - pad);
+    const newEnd = epochToBJ(vmax + pad);
 
     // 避免频繁重复查询相同范围
     const key = newStart + '|' + newEnd;
