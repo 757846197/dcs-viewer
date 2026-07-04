@@ -37,6 +37,44 @@ logger = logging.getLogger(__name__)
 
 analysis_bp = Blueprint("analysis", __name__, url_prefix="/api/analysis")
 
+# === 信号映射: 东设备信号 → 西设备信号 ===
+# 判定规则默认使用东设备信号名，西设备自动映射
+_EAST_TO_WEST_MAP = {
+    # 开口机
+    "LT_LQFC_57": "LT_LQFC_94",   # 开口机选择
+    "LT_LQFC_59": "LT_LQFC_96",   # 回转进/退
+    "LT_LQFC_61": "LT_LQFC_98",   # 小车前进/后退
+    "LT_LQFC_63": "LT_LQFC_100",  # 回转位置
+    "LT_LQFC_64": "LT_LQFC_101",  # 回转压力
+    "LT_LQFC_66": "LT_LQFC_103",  # 倾动压力
+    "LT_LQFC_67": "LT_LQFC_104",  # 推进位置
+    "LT_LQFC_68": "LT_LQFC_105",  # 推进压力
+    "LT_LQFC_69": "LT_LQFC_106",  # 冲击开/关
+    "LT_LQFC_74": "LT_LQFC_111",  # 回转回油
+    "LT_LQFC_75": "LT_LQFC_112",  # 倾动回油
+    "LT_LQFC_87": "LT_LQFC_124",  # 转钎压力
+    "LT_LQFC_88": "LT_LQFC_125",  # 冲击压力
+    # 堵口机
+    "LT_LQFC_130": "LT_LQFC_153", # 遥控启动
+    "LT_LQFC_133": "LT_LQFC_156", # 回转进/退
+    "LT_LQFC_134": "LT_LQFC_157", # 打泥前进/后退
+    "LT_LQFC_135": "LT_LQFC_158", # 回转位置
+    "LT_LQFC_137": "LT_LQFC_160", # 打泥位置
+    "LT_LQFC_138": "LT_LQFC_161", # 打泥压力
+    "LT_LQFC_139": "LT_LQFC_162", # 退泥压力
+    "LT_LQFC_179": "LT_LQFC_180", # 打泥量
+}
+
+
+def _resolve_signal(rule_signal, equipment_id):
+    """将规则中的信号名映射到实际设备信号名。
+    
+    规则以东设备信号名为基准，如果当前设备是西设备，自动映射。
+    """
+    if isinstance(equipment_id, str) and "west" in equipment_id:
+        return _EAST_TO_WEST_MAP.get(rule_signal, rule_signal)
+    return rule_signal
+
 
 @analysis_bp.route("/ping")
 def api_ping():
@@ -442,9 +480,15 @@ def api_cycles():
         # 加载检测配置
         opening_rules, opening_filter = _load_detect_rules("opening", config_id)
         
-        # 若配置包含阈值规则，使用阈值联合检测
+        # 若配置包含阈值规则，使用阈值联合检测（分别检测东西设备）
         if _has_threshold_rule(opening_rules):
-            cycles.extend(_detect_threshold_cycles(start, end, opening_rules, opening_filter, "opening"))
+            for machine, sig in OPENING_CONFIG.items():
+                is_west = "西" in machine
+                mapped_rules = _map_rules_for_equipment(opening_rules, is_west)
+                machine_cycles = _detect_threshold_cycles(
+                    start, end, mapped_rules, opening_filter, "opening", machine
+                )
+                cycles.extend(machine_cycles)
         else:
             #  legacy: remote==1 AND swing_pos 穿越 90°
             for machine, sig in OPENING_CONFIG.items():
@@ -526,7 +570,13 @@ def api_cycles():
         plugging_rules, plugging_filter = _load_detect_rules("plugging", config_id)
         
         if _has_threshold_rule(plugging_rules):
-            cycles.extend(_detect_threshold_cycles(start, end, plugging_rules, plugging_filter, "plugging"))
+            for machine, sig in PLUGGING_CONFIG.items():
+                is_west = "西" in machine
+                mapped_rules = _map_rules_for_equipment(plugging_rules, is_west)
+                machine_cycles = _detect_threshold_cycles(
+                    start, end, mapped_rules, plugging_filter, "plugging", machine
+                )
+                cycles.extend(machine_cycles)
         else:
             # legacy: remote_start==1 AND mud_cmd 边沿
             for machine, sig in PLUGGING_CONFIG.items():
@@ -585,6 +635,9 @@ def api_cycles():
     
     cycles.sort(key=lambda c: c["trigger_time"])
     
+    # ── 批量提取指标和结果判定（基于判定规则配置）──
+    _enrich_cycles_with_metrics(cycles, start, end)
+    
     # ── 去重并存入数据库 ──
     saved_count = 0
     if cycles:
@@ -610,6 +663,72 @@ def api_cycles():
         "count": len(cycles),
         "saved_to_db": saved_count
     })
+
+
+def _enrich_cycles_with_metrics(cycles, time_start, time_end):
+    """批量提取所有周期的判定指标（一次 InfluxDB 查询 + 逐个窗口评估）"""
+    if not cycles:
+        return
+    
+    # 按 (type, east/west) 分组，因为需要不同的信号集
+    groups = {}
+    for c in cycles:
+        is_plug = c["type"] == "plugging"
+        is_west = "西" in c.get("machine", "")
+        key = ("plugging" if is_plug else "opening", "west" if is_west else "east")
+        groups.setdefault(key, []).append(c)
+    
+    for (cyc_type, direction), group_cycles in groups.items():
+        equip_id = f"{direction}_{'plugger' if cyc_type == 'plugging' else 'opener'}"
+        is_plugging = cyc_type == "plugging"
+        
+        # 收集本组需要的所有信号
+        signals = _get_relevant_signals(cyc_type, equip_id)
+        resolved_signals = [_resolve_signal(s, equip_id) for s in signals]
+        
+        try:
+            data = fetch_timeseries(time_start, time_end, resolved_signals, timeout_ms=60000)
+        except Exception:
+            # 逐个窗口重试
+            for c in group_cycles:
+                try:
+                    _enrich_single_cycle(c, is_plugging, equip_id)
+                except Exception:
+                    pass
+            continue
+        
+        # 逐个窗口评估
+        for c in group_cycles:
+            try:
+                st_str = c["window_start"]
+                et_str = c["window_end"]
+                st = datetime.fromisoformat(st_str.replace("Z", "+00:00"))
+                et = datetime.fromisoformat(et_str.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            
+            metrics = _extract_cycle_metrics(data, st, et, is_plugging, equip_id)
+            c["result"] = metrics.get("result", "unknown")
+            c["breakthrough"] = metrics.get("breakthrough", False)
+            c["metrics"] = metrics  # 完整指标供前端使用
+
+
+def _enrich_single_cycle(cycle, is_plugging, equipment_id):
+    """单个周期的信号查询 + 指标提取（回退方案）"""
+    try:
+        signals = _get_relevant_signals("plugging" if is_plugging else "opening", equipment_id)
+        resolved = [_resolve_signal(s, equipment_id) for s in signals]
+        data = fetch_timeseries(
+            cycle["window_start"], cycle["window_end"], resolved, timeout_ms=30000
+        )
+        st = datetime.fromisoformat(cycle["window_start"].replace("Z", "+00:00"))
+        et = datetime.fromisoformat(cycle["window_end"].replace("Z", "+00:00"))
+        metrics = _extract_cycle_metrics(data, st, et, is_plugging, equipment_id)
+        cycle["result"] = metrics.get("result", "unknown")
+        cycle["breakthrough"] = metrics.get("breakthrough", False)
+        cycle["metrics"] = metrics
+    except Exception:
+        pass
 
 
 def _load_detect_rules(cycle_type, config_id=""):
@@ -639,6 +758,24 @@ def _load_detect_rules(cycle_type, config_id=""):
 def _has_threshold_rule(rules):
     """检查规则列表是否包含阈值条件规则"""
     return any(r.get("role") == "threshold" for r in rules)
+
+
+def _map_rules_for_equipment(rules, is_west):
+    """将规则中的信号名映射到对应设备。
+    
+    规则默认使用东设备信号名，西设备需要映射。
+    返回新规则列表（浅拷贝，修改 signal 字段）。
+    """
+    if not is_west:
+        return rules
+    mapped = []
+    for r in rules:
+        new_r = dict(r)
+        sig = new_r.get("signal", "")
+        if sig in _EAST_TO_WEST_MAP:
+            new_r["signal"] = _EAST_TO_WEST_MAP[sig]
+        mapped.append(new_r)
+    return mapped
 
 
 def _detect_threshold_cycles(start, end, rules, filter_cfg, cycle_type, machine_label=""):
@@ -924,105 +1061,293 @@ def api_labeling_export():
 
 # === Helper: extract metrics from a cycle data window ===
 
+def _compute_signal_metrics(data, start_time, end_time, signal_name):
+    """计算单个信号在时间窗口内的基本统计量"""
+    vals = [v for t, v in data.get(signal_name, []) if start_time <= t <= end_time]
+    if not vals:
+        return {"min": 0, "max": 0, "mean": 0, "range": 0, "count": 0}
+    return {
+        "min": min(vals), "max": max(vals),
+        "mean": sum(vals) / len(vals),
+        "range": max(vals) - min(vals),
+        "count": len(vals),
+        "late_early_ratio": _late_early_ratio(vals),
+        "values": vals,
+    }
+
+def _late_early_ratio(vals):
+    """计算后期/前期压力比值（用于钻透判定）
+    
+    取前1/3为"前期"，后1/3为"后期"，比值越小说明后期压力降得越多。
+    """
+    n = len(vals)
+    if n < 6:
+        return 1.0
+    third = max(1, n // 3)
+    early = sum(vals[:third]) / third
+    late = sum(vals[-third:]) / third
+    if early <= 0:
+        return 1.0
+    return late / early
+
+def _eval_param(param, signal_metrics):
+    """根据判定规则的参数定义，评估信号是否满足条件
+    
+    Args:
+        param: 判定参数 {param_name, value, operator, label, unit}
+        signal_metrics: 信号统计量 {min, max, mean, range, late_early_ratio, values}
+    
+    Returns: True/False
+    """
+    op = param.get("operator", "gte")
+    threshold = float(param.get("value", 0))
+    param_name = param.get("param_name", "")
+    
+    # 根据 param_name 语义决定使用哪个统计量
+    # LT_LQFC_67 在开口中使用 range (行程位移)，在钻透/深度中也可能用 ratio
+    # LT_LQFC_68 通常使用 late_early_ratio (压力骤降比)
+    # LT_LQFC_69 使用 max (是否激活)
+    # LT_LQFC_179 使用 range (打泥量)
+    # LT_LQFC_137 使用 range 或 max
+    # LT_LQFC_138 使用 max (峰值)
+    # LT_LQFC_134 使用 count (保压时长)
+    
+    if op in ("gt", "gte", "lt", "lte"):
+        # 根据信号类型选择合适的统计量
+        val = _pick_value_for_param(param_name, param, signal_metrics)
+        if op == "gt": return val > threshold
+        if op == "gte": return val >= threshold
+        if op == "lt": return val < threshold
+        if op == "lte": return val <= threshold
+    
+    if op == "eq":
+        # bool 类型：信号是否激活
+        val = signal_metrics.get("max", 0)
+        if threshold == 1:
+            return val >= 0.5  # 二进制信号 >= 0.5 视为 1
+        return val == threshold
+    
+    return True  # 未知操作符，默认通过
+
+def _pick_value_for_param(param_name, param, sm):
+    """根据参数名和语义选择合适的信号统计量"""
+    param_name = param_name or ""
+    label = (param.get("label", "") or "").lower()
+    
+    # 压力骤降比: 使用 late_early_ratio
+    if "骤降" in label or "降比" in label or "ratio" in label:
+        return 1.0 - sm.get("late_early_ratio", 1.0)  # 转换为降幅
+    if param_name == "LT_LQFC_68":
+        return 1.0 - sm.get("late_early_ratio", 1.0)  # 默认: 压力降幅
+    
+    # 行程占比/到位比: 使用 range 相对于期望行程的比值
+    if "占比" in label or "到位比" in label or "ratio" in param.get("unit", ""):
+        return sm.get("range", 0)
+    
+    # 位移/行程: 使用 range
+    if param_name in ("LT_LQFC_67", "LT_LQFC_137"):
+        if sm.get("range", 0) > 0:
+            return sm["range"]
+        return sm.get("max", 0)
+    
+    # 压力峰值: 使用 max
+    if param_name in ("LT_LQFC_68", "LT_LQFC_138", "LT_LQFC_66", "LT_LQFC_87"):
+        return sm.get("max", 0)
+    
+    # 时长/保压: 使用 count
+    if param_name in ("LT_LQFC_134", "LT_LQFC_69"):
+        return sm.get("count", 0)
+    
+    # 打泥量: 使用 range
+    if param_name in ("LT_LQFC_179", "LT_LQFC_180"):
+        return sm.get("range", 0)
+    
+    # 大臂到位角度: 使用 min（min越小说明已回位）
+    if param_name == "LT_LQFC_63":
+        return sm.get("min", 0)
+    
+    # 编码器校正: 总是 true（仅标记）
+    if "encoder_offset" in param_name or "calib" in param_name:
+        return 1
+    
+    # 默认: 使用 range
+    return sm.get("range", sm.get("max", 0))
+
+
 def _extract_cycle_metrics(
     data: dict, start_time, end_time, is_plugging: bool, equipment_id: str
 ) -> dict:
-    """Extract key metrics from raw signal data within a cycle window."""
-    metrics = {}
+    """从配置驱动的判定规则提取周期指标和判定结果。
     
+    优先级: result_judge_configs 配置表 > 硬编码兜底逻辑
+    """
+    metrics = {}
+    cycle_type = "plugging" if is_plugging else "opening"
+    
+    # 1. 预先计算所有相关信号的基本统计量    
+    signal_stats = {}
+    relevant_signals = _get_relevant_signals(cycle_type, equipment_id)
+    for sig in relevant_signals:
+        resolved = _resolve_signal(sig, equipment_id)
+        signal_stats[sig] = _compute_signal_metrics(data, start_time, end_time, resolved)
+    
+    # 2. 提取基础指标（用于前端展示）
     if is_plugging:
-        press_key = "LT_LQFC_138" if "east" in equipment_id else "LT_LQFC_161"
-        mud_key = "LT_LQFC_179" if "east" in equipment_id else "LT_LQFC_180"
-        hold_key = "LT_LQFC_134" if "east" in equipment_id else "LT_LQFC_157"
+        mud_sig = _resolve_signal("LT_LQFC_179", equipment_id)
+        mud_press_sig = _resolve_signal("LT_LQFC_138", equipment_id)
+        hold_sig = _resolve_signal("LT_LQFC_134", equipment_id)
         
-        press_vals = [v for t, v in data.get(press_key, []) if start_time <= t <= end_time]
-        mud_vals = [v for t, v in data.get(mud_key, []) if start_time <= t <= end_time]
-        hold_vals = [v for t, v in data.get(hold_key, []) if start_time <= t <= end_time]
+        mud_stats = signal_stats.get("LT_LQFC_179", {})
+        press_stats = signal_stats.get("LT_LQFC_138", {})
+        hold_stats = signal_stats.get("LT_LQFC_134", {})
         
-        if mud_vals:
-            metrics["mud_qty"] = round(max(mud_vals) - min(mud_vals), 2)
-        else:
-            metrics["mud_qty"] = 0
-        if press_vals:
-            metrics["mud_press_peak"] = round(max(press_vals), 1)
-            metrics["mud_press_mean"] = round(sum(press_vals) / len(press_vals), 1)
-        else:
-            metrics["mud_press_peak"] = 0
-            metrics["mud_press_mean"] = 0
-        
-        # Hold duration: count high signal after peak
-        hold_ok = False
-        if hold_vals:
-            hold_count = sum(1 for v in hold_vals if v >= 0.5)
-            hold_duration = hold_count  # 1 sample ≈ 1 second
-            metrics["hold_duration_s"] = hold_duration
-            metrics["hold_ok"] = hold_duration >= 60
-            hold_ok = hold_duration >= 60
-        else:
-            metrics["hold_duration_s"] = 0
-            metrics["hold_ok"] = False
-        
-        # Result determination
-        if metrics["mud_qty"] > 0.1 and hold_ok:
-            metrics["result"] = "success"
-        elif metrics["mud_qty"] > 0.1:
-            metrics["result"] = "partial"
-        else:
-            metrics["result"] = "fail"
-        metrics["breakthrough"] = hold_ok
+        metrics["mud_qty"] = round(mud_stats.get("range", 0), 2)
+        metrics["mud_press_peak"] = round(press_stats.get("max", 0), 1)
+        metrics["mud_press_mean"] = round(press_stats.get("mean", 0), 1)
+        metrics["hold_duration_s"] = hold_stats.get("count", 0)
+        metrics["hold_ok"] = metrics["hold_duration_s"] >= 60
+        metrics["breakthrough"] = metrics["mud_press_peak"] >= 15 and metrics["mud_qty"] >= 80
     else:
-        pos_key = "LT_LQFC_67" if "east" in equipment_id else "LT_LQFC_104"
-        press_key = "LT_LQFC_68" if "east" in equipment_id else "LT_LQFC_105"
-        drill_key = "LT_LQFC_87" if "east" in equipment_id else "LT_LQFC_124"
-        impact_key = "LT_LQFC_69" if "east" in equipment_id else "LT_LQFC_106"
+        pos_sig = _resolve_signal("LT_LQFC_67", equipment_id)
+        press_sig = _resolve_signal("LT_LQFC_68", equipment_id)
+        drill_sig = _resolve_signal("LT_LQFC_87", equipment_id)
+        impact_sig = _resolve_signal("LT_LQFC_69", equipment_id)
         
-        pos_vals = [v for t, v in data.get(pos_key, []) if start_time <= t <= end_time]
-        press_vals = [v for t, v in data.get(press_key, []) if start_time <= t <= end_time]
-        drill_vals = [v for t, v in data.get(drill_key, []) if start_time <= t <= end_time]
-        impact_vals = [v for t, v in data.get(impact_key, []) if start_time <= t <= end_time]
+        pos_stats = signal_stats.get("LT_LQFC_67", {})
+        press_stats = signal_stats.get("LT_LQFC_68", {})
+        drill_stats = signal_stats.get("LT_LQFC_87", {})
+        impact_stats = signal_stats.get("LT_LQFC_69", {})
         
-        if pos_vals:
-            metrics["push_depth"] = round(max(pos_vals) - min(pos_vals), 3)
-            metrics["push_pos_change"] = round(max(pos_vals) - min(pos_vals), 3)
-        else:
-            metrics["push_depth"] = 0
-            metrics["push_pos_change"] = 0
-        if press_vals:
-            metrics["push_press_max"] = round(max(press_vals), 1)
-            metrics["push_press_mean"] = round(sum(press_vals) / len(press_vals), 1)
-            metrics["push_press_peak"] = round(max(press_vals), 1)
-        else:
-            metrics["push_press_max"] = 0
-            metrics["push_press_mean"] = 0
-            metrics["push_press_peak"] = 0
-        if drill_vals:
-            metrics["drill_press_max"] = round(max(drill_vals), 1)
-            metrics["drill_press_mean"] = round(sum(drill_vals) / len(drill_vals), 1)
-        else:
-            metrics["drill_press_max"] = 0
-            metrics["drill_press_mean"] = 0
+        metrics["push_depth"] = round(pos_stats.get("range", 0), 3)
+        metrics["push_pos_change"] = round(pos_stats.get("range", 0), 3)
+        metrics["push_press_max"] = round(press_stats.get("max", 0), 1)
+        metrics["push_press_mean"] = round(press_stats.get("mean", 0), 1)
+        metrics["push_press_peak"] = round(press_stats.get("max", 0), 1)
+        metrics["drill_press_max"] = round(drill_stats.get("max", 0), 1)
+        metrics["drill_press_mean"] = round(drill_stats.get("mean", 0), 1)
+        metrics["impact_press_active"] = impact_stats.get("max", 0) >= 0.5
         
-        impact_active = any(v >= 0.5 for v in impact_vals) if impact_vals else False
-        metrics["impact_press_active"] = impact_active
-        
-        # Breakthrough: depth > 2m AND pressure dropped > 20%
+        # 硬编码钻透兜底
         breakthrough = False
+        pos_vals = signal_stats.get("LT_LQFC_67", {}).get("values", [])
+        press_vals = signal_stats.get("LT_LQFC_68", {}).get("values", [])
         if len(pos_vals) > 5 and len(press_vals) > 5:
             depth_change = max(pos_vals) - min(pos_vals)
-            early_press = sum(press_vals[:len(press_vals)//3]) / max(1, len(press_vals)//3)
-            late_press = sum(press_vals[2*len(press_vals)//3:]) / max(1, len(press_vals) - 2*len(press_vals)//3)
-            if depth_change > 2.0 and early_press > 0 and (early_press - late_press) / early_press > 0.2:
-                breakthrough = True
-        
+            if depth_change > 2.0:
+                ratio = _late_early_ratio(press_vals)
+                if ratio < 0.8:
+                    breakthrough = True
         metrics["breakthrough"] = breakthrough
-        if breakthrough:
-            metrics["result"] = "success"
-        elif metrics["push_depth"] > 0.1:
-            metrics["result"] = "incomplete"
+    
+    # 3. 从配置表加载判定规则并评估
+    judge_configs = _load_judge_configs(cycle_type)
+    if judge_configs:
+        verdicts = {}
+        for cfg in judge_configs:
+            category = cfg.get("category", "")
+            logic_op = cfg.get("logic_op", "AND")
+            params = cfg.get("params", [])
+            if not params:
+                continue
+            results = []
+            for p in params:
+                param_name = p.get("param_name", "")
+                if not param_name or "encoder_offset" in param_name or "calib" in param_name:
+                    results.append(True)  # 编码器校正参数: 视为满足
+                    continue
+                sm = signal_stats.get(param_name)
+                if sm is None:
+                    results.append(False)
+                    continue
+                results.append(_eval_param(p, sm))
+            
+            if logic_op == "AND":
+                verdicts[category] = all(results)
+            else:
+                verdicts[category] = any(results)
+        
+        # 4. 综合判定结果
+        metrics["judge_details"] = verdicts
+        
+        if is_plugging:
+            if verdicts.get("success"):
+                metrics["result"] = "success"
+            elif verdicts.get("fail"):
+                metrics["result"] = "fail"
+            elif verdicts.get("unfinished"):
+                metrics["result"] = "partial"
+            else:
+                # 兜底
+                if metrics["mud_qty"] > 0.1 and metrics["hold_ok"]:
+                    metrics["result"] = "success"
+                elif metrics["mud_qty"] > 0.1:
+                    metrics["result"] = "partial"
+                else:
+                    metrics["result"] = "fail"
+            
+            # 堵口钻透 = 泥炮到位
+            if verdicts.get("breakthrough"):
+                metrics["breakthrough"] = True
         else:
-            metrics["result"] = "fail"
+            if verdicts.get("success"):
+                metrics["result"] = "success"
+            elif verdicts.get("fail"):
+                metrics["result"] = "fail"
+            elif verdicts.get("incomplete"):
+                metrics["result"] = "incomplete"
+            else:
+                if metrics["breakthrough"]:
+                    metrics["result"] = "success"
+                elif metrics["push_depth"] > 0.1:
+                    metrics["result"] = "incomplete"
+                else:
+                    metrics["result"] = "fail"
+            
+            if verdicts.get("breakthrough"):
+                metrics["breakthrough"] = True
+        
+        # 深度计算
+        if verdicts.get("depth"):
+            depth_sig = "LT_LQFC_67" if not is_plugging else "LT_LQFC_137"
+            ds = signal_stats.get(depth_sig, {})
+            metrics["depth_effective"] = ds.get("range", 0) >= 1.0
+    else:
+        # 无配置表规则，使用硬编码兜底
+        if is_plugging:
+            if metrics["mud_qty"] > 0.1 and metrics["hold_ok"]:
+                metrics["result"] = "success"
+            elif metrics["mud_qty"] > 0.1:
+                metrics["result"] = "partial"
+            else:
+                metrics["result"] = "fail"
+        else:
+            if metrics["breakthrough"]:
+                metrics["result"] = "success"
+            elif metrics["push_depth"] > 0.1:
+                metrics["result"] = "incomplete"
+            else:
+                metrics["result"] = "fail"
     
     return metrics
+
+
+def _get_relevant_signals(cycle_type, equipment_id):
+    """获取当前作业类型和设备的全部相关信号名（以东设备为基准）"""
+    if cycle_type == "opening":
+        return ["LT_LQFC_67", "LT_LQFC_68", "LT_LQFC_69", "LT_LQFC_63",
+                "LT_LQFC_87", "LT_LQFC_66", "LT_LQFC_64", "LT_LQFC_88"]
+    else:
+        return ["LT_LQFC_179", "LT_LQFC_138", "LT_LQFC_137",
+                "LT_LQFC_134", "LT_LQFC_135", "LT_LQFC_136"]
+
+
+def _load_judge_configs(cycle_type):
+    """从数据库加载判定规则配置（带缓存，仅本请求内有效）"""
+    try:
+        configs = get_result_judge_configs(cycle_type=cycle_type)
+        return [c for c in configs if c.get("enabled")]
+    except Exception:
+        return []
 
 
 # === Endpoint 1: Multi-machine state timeline ===
@@ -1122,17 +1447,12 @@ def api_metrics():
     equipment_id = machine_map.get(machine, "east_plugger")
     is_plugging = metrics_type == "plugging"
 
-    # Build param list for the equipment + type
-    if is_plugging:
-        if "east" in equipment_id:
-            params = ["LT_LQFC_138", "LT_LQFC_179", "LT_LQFC_134"]
-        else:
-            params = ["LT_LQFC_161", "LT_LQFC_180", "LT_LQFC_157"]
-    else:
-        if "east" in equipment_id:
-            params = ["LT_LQFC_67", "LT_LQFC_68", "LT_LQFC_87", "LT_LQFC_69"]
-        else:
-            params = ["LT_LQFC_104", "LT_LQFC_105", "LT_LQFC_124", "LT_LQFC_106"]
+    # Build param list using variable config signals
+    relevant_signals = _get_relevant_signals(
+        "plugging" if is_plugging else "opening", equipment_id
+    )
+    params = [_resolve_signal(s, equipment_id) for s in relevant_signals]
+    params = list(set(params))  # 去重
 
     try:
         data = fetch_timeseries(window_start, window_end, params, "1s", timeout_ms=30000)
