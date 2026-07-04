@@ -347,140 +347,151 @@ def api_cycles():
     
     cycles = []
     
-    # ━━━ 开口检测: remote==1 AND swing_pos 穿越 90° ━━━
+    # ━━━ 开口检测 ━━━
     if cycle_type in ("opening", "all"):
         # 加载检测配置
         opening_rules, opening_filter = _load_detect_rules("opening", config_id)
         
-        for machine, sig in OPENING_CONFIG.items():
-            # 用配置中的信号替代硬编码
-            remote_sig = sig["remote"]
-            swing_sig = sig["swing_pos"]
-            threshold = 90
-            tolerance = 2
+        # 若配置包含阈值规则，使用阈值联合检测
+        if _has_threshold_rule(opening_rules):
+            cycles.extend(_detect_threshold_cycles(start, end, opening_rules, opening_filter, "opening"))
+        else:
+            #  legacy: remote==1 AND swing_pos 穿越 90°
+            for machine, sig in OPENING_CONFIG.items():
+                # 用配置中的信号替代硬编码
+                remote_sig = sig["remote"]
+                swing_sig = sig["swing_pos"]
+                threshold = 90
+                tolerance = 2
             
-            if opening_rules:
-                for rule in opening_rules:
-                    role = rule.get("role", "")
-                    val = rule.get("threshold", 90)
-                    tol = rule.get("tolerance_s", 2)
-                    sig_name = rule.get("signal", "")
-                    if role == "remote":
-                        remote_sig = sig_name
-                    elif role == "crossing":
-                        swing_sig = sig_name
-                        threshold = val
-                        tolerance = tol
+                if opening_rules:
+                    for rule in opening_rules:
+                        role = rule.get("role", "")
+                        val = rule.get("threshold", 90)
+                        tol = rule.get("tolerance_s", 2)
+                        sig_name = rule.get("signal", "")
+                        if role == "remote":
+                            remote_sig = sig_name
+                        elif role == "crossing":
+                            swing_sig = sig_name
+                            threshold = val
+                            tolerance = tol
             
-            detect_params = [remote_sig, swing_sig]
-            try:
-                data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
-            except Exception:
-                continue
+                detect_params = [remote_sig, swing_sig]
+                try:
+                    data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
+                except Exception:
+                    continue
             
-            remote = _build_time_map(data.get(remote_sig, []))
-            swing = sorted(data.get(swing_sig, []), key=lambda x: x[0])
+                remote = _build_time_map(data.get(remote_sig, []))
+                swing = sorted(data.get(swing_sig, []), key=lambda x: x[0])
             
-            if len(swing) < 2 or len(remote) < 2:
-                continue
+                if len(swing) < 2 or len(remote) < 2:
+                    continue
             
-            in_cycle = False
-            cycle_start = None
-            filter_min = opening_filter.get("filter_min_s", 30)
-            filter_max = opening_filter.get("filter_max_s", 3600)
+                in_cycle = False
+                cycle_start = None
+                filter_min = opening_filter.get("filter_min_s", 30)
+                filter_max = opening_filter.get("filter_max_s", 3600)
             
-            for i in range(1, len(swing)):
-                prev_v, curr_v = swing[i-1][1], swing[i][1]
-                t = swing[i][0]
-                ts = t.timestamp()
+                for i in range(1, len(swing)):
+                    prev_v, curr_v = swing[i-1][1], swing[i][1]
+                    t = swing[i][0]
+                    ts = t.timestamp()
                 
-                if not in_cycle and _crossed(prev_v, curr_v, threshold):
-                    if _remote_nearby(remote, ts, tolerance=tolerance):
-                        in_cycle = True
-                        cycle_start = t
+                    if not in_cycle and _crossed(prev_v, curr_v, threshold):
+                        if _remote_nearby(remote, ts, tolerance=tolerance):
+                            in_cycle = True
+                            cycle_start = t
                     
-                elif in_cycle and _crossed(curr_v, prev_v, threshold):
-                    duration = (t - cycle_start).total_seconds()
+                    elif in_cycle and _crossed(curr_v, prev_v, threshold):
+                        duration = (t - cycle_start).total_seconds()
+                        if filter_min <= duration <= filter_max:
+                            cycles.append({
+                                "machine": machine, "type": "opening",
+                                "trigger_time": cycle_start.isoformat(),
+                                "window_start": cycle_start.isoformat(),
+                                "window_end": t.isoformat(),
+                                "duration_s": round(duration, 1),
+                                "result": "unknown", "breakthrough": False,
+                            })
+                        in_cycle = False
+                        if len(cycles) >= limit: break
+            
+                if in_cycle and swing:
+                    last_t = swing[-1][0]
+                    duration = (last_t - cycle_start).total_seconds()
                     if filter_min <= duration <= filter_max:
                         cycles.append({
                             "machine": machine, "type": "opening",
                             "trigger_time": cycle_start.isoformat(),
                             "window_start": cycle_start.isoformat(),
-                            "window_end": t.isoformat(),
+                            "window_end": last_t.isoformat(),
                             "duration_s": round(duration, 1),
                             "result": "unknown", "breakthrough": False,
                         })
-                    in_cycle = False
-                    if len(cycles) >= limit: break
-            
-            if in_cycle and swing:
-                last_t = swing[-1][0]
-                duration = (last_t - cycle_start).total_seconds()
-                if filter_min <= duration <= filter_max:
-                    cycles.append({
-                        "machine": machine, "type": "opening",
-                        "trigger_time": cycle_start.isoformat(),
-                        "window_start": cycle_start.isoformat(),
-                        "window_end": last_t.isoformat(),
-                        "duration_s": round(duration, 1),
-                        "result": "unknown", "breakthrough": False,
-                    })
     
-    # ━━━ 堵口检测: remote_start==1 AND mud_cmd 边沿 ━━━
+    # ━━━ 堵口检测 ━━━
     if cycle_type in ("plugging", "all"):
-        for machine, sig in PLUGGING_CONFIG.items():
-            detect_params = [sig["remote_start"], sig["mud_cmd"]]
-            try:
-                data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
-            except Exception:
-                continue
+        plugging_rules, plugging_filter = _load_detect_rules("plugging", config_id)
+        
+        if _has_threshold_rule(plugging_rules):
+            cycles.extend(_detect_threshold_cycles(start, end, plugging_rules, plugging_filter, "plugging"))
+        else:
+            # legacy: remote_start==1 AND mud_cmd 边沿
+            for machine, sig in PLUGGING_CONFIG.items():
+                detect_params = [sig["remote_start"], sig["mud_cmd"]]
+                try:
+                    data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
+                except Exception:
+                    continue
             
-            remote_start = _build_time_map(data.get(sig["remote_start"], []))
-            mud_cmd = sorted(data.get(sig["mud_cmd"], []), key=lambda x: x[0])
+                remote_start = _build_time_map(data.get(sig["remote_start"], []))
+                mud_cmd = sorted(data.get(sig["mud_cmd"], []), key=lambda x: x[0])
             
-            if len(mud_cmd) < 2 or len(remote_start) < 2:
-                continue
+                if len(mud_cmd) < 2 or len(remote_start) < 2:
+                    continue
             
-            in_cycle = False
-            cycle_start = None
-            for i in range(1, len(mud_cmd)):
-                prev_v, curr_v = mud_cmd[i-1][1], mud_cmd[i][1]
-                t = mud_cmd[i][0]
-                ts = t.timestamp()
+                in_cycle = False
+                cycle_start = None
+                for i in range(1, len(mud_cmd)):
+                    prev_v, curr_v = mud_cmd[i-1][1], mud_cmd[i][1]
+                    t = mud_cmd[i][0]
+                    ts = t.timestamp()
                 
-                # Rising edge on mud_cmd (0→1)
-                if not in_cycle and prev_v < 0.5 and curr_v >= 0.5:
-                    if _remote_nearby(remote_start, ts, tolerance=2):
-                        in_cycle = True
-                        cycle_start = t
+                    # Rising edge on mud_cmd (0→1)
+                    if not in_cycle and prev_v < 0.5 and curr_v >= 0.5:
+                        if _remote_nearby(remote_start, ts, tolerance=2):
+                            in_cycle = True
+                            cycle_start = t
                 
-                # Falling edge (1→0) = cycle end
-                elif in_cycle and prev_v >= 0.5 and curr_v < 0.5:
-                    duration = (t - cycle_start).total_seconds()
+                    # Falling edge (1→0) = cycle end
+                    elif in_cycle and prev_v >= 0.5 and curr_v < 0.5:
+                        duration = (t - cycle_start).total_seconds()
+                        if 30 <= duration <= 3600:
+                            cycles.append({
+                                "machine": machine, "type": "plugging",
+                                "trigger_time": cycle_start.isoformat(),
+                                "window_start": cycle_start.isoformat(),
+                                "window_end": t.isoformat(),
+                                "duration_s": round(duration, 1),
+                                "result": "unknown", "hold_ok": False,
+                            })
+                        in_cycle = False
+                        if len(cycles) >= limit: break
+            
+                if in_cycle and mud_cmd:
+                    last_t = mud_cmd[-1][0]
+                    duration = (last_t - cycle_start).total_seconds()
                     if 30 <= duration <= 3600:
                         cycles.append({
                             "machine": machine, "type": "plugging",
                             "trigger_time": cycle_start.isoformat(),
                             "window_start": cycle_start.isoformat(),
-                            "window_end": t.isoformat(),
+                            "window_end": last_t.isoformat(),
                             "duration_s": round(duration, 1),
                             "result": "unknown", "hold_ok": False,
                         })
-                    in_cycle = False
-                    if len(cycles) >= limit: break
-            
-            if in_cycle and mud_cmd:
-                last_t = mud_cmd[-1][0]
-                duration = (last_t - cycle_start).total_seconds()
-                if 30 <= duration <= 3600:
-                    cycles.append({
-                        "machine": machine, "type": "plugging",
-                        "trigger_time": cycle_start.isoformat(),
-                        "window_start": cycle_start.isoformat(),
-                        "window_end": last_t.isoformat(),
-                        "duration_s": round(duration, 1),
-                        "result": "unknown", "hold_ok": False,
-                    })
     
     cycles.sort(key=lambda c: c["trigger_time"])
     
@@ -533,6 +544,106 @@ def _load_detect_rules(cycle_type, config_id=""):
         filter_cfg["filter_max_s"] = cfg.get("filter_max_s", 3600)
     
     return rules, filter_cfg
+
+
+def _has_threshold_rule(rules):
+    """检查规则列表是否包含阈值条件规则"""
+    return any(r.get("role") == "threshold" for r in rules)
+
+
+def _detect_threshold_cycles(start, end, rules, filter_cfg, cycle_type, machine_label=""):
+    """基于阈值规则的周期检测：所有规则条件同时满足的持续区间"""
+    signals = list(set(r["signal"] for r in rules if r.get("signal")))
+    if not signals:
+        return []
+
+    try:
+        data = fetch_timeseries(start, end, signals, timeout_ms=60000)
+    except Exception:
+        return []
+
+    # 构建每条规则的时间序列
+    rule_series = []
+    for rule in rules:
+        pts = data.get(rule.get("signal", ""), [])
+        if not pts:
+            continue
+        rule_series.append((rule, sorted(pts, key=lambda x: x[0])))
+
+    if not rule_series:
+        return []
+
+    all_times = sorted(set(t for _, pts in rule_series for t, _ in pts))
+    if not all_times:
+        return []
+
+    filter_min = filter_cfg.get("filter_min_s", 30)
+    filter_max = filter_cfg.get("filter_max_s", 3600)
+
+    cycles = []
+    in_cycle = False
+    cycle_start = None
+
+    for t in all_times:
+        all_true = True
+        for rule, pts in rule_series:
+            # 取 t 时刻或之前最近的值
+            val = None
+            for pt_t, pt_v in pts:
+                if pt_t <= t:
+                    val = pt_v
+                else:
+                    break
+            if val is None:
+                all_true = False
+                break
+
+            role = rule.get("role", "")
+            if role == "remote":
+                if not (val == 1 or val > 0.5):
+                    all_true = False
+                    break
+            elif role == "threshold":
+                threshold = rule.get("threshold", 0)
+                operator = rule.get("operator", "gt")
+                if operator == "gt" and not (val > threshold):
+                    all_true = False
+                    break
+                if operator == "lt" and not (val < threshold):
+                    all_true = False
+                    break
+
+        if all_true and not in_cycle:
+            in_cycle = True
+            cycle_start = t
+        elif not all_true and in_cycle:
+            duration = (t - cycle_start).total_seconds()
+            if filter_min <= duration <= filter_max:
+                cycles.append({
+                    "machine": machine_label or ("东开口机" if cycle_type == "opening" else "东堵口机"),
+                    "type": cycle_type,
+                    "trigger_time": cycle_start.isoformat(),
+                    "window_start": cycle_start.isoformat(),
+                    "window_end": t.isoformat(),
+                    "duration_s": round(duration, 1),
+                    "result": "unknown", "breakthrough": False,
+                })
+            in_cycle = False
+
+    if in_cycle and cycle_start:
+        duration = (all_times[-1] - cycle_start).total_seconds()
+        if filter_min <= duration <= filter_max:
+            cycles.append({
+                "machine": machine_label or ("东开口机" if cycle_type == "opening" else "东堵口机"),
+                "type": cycle_type,
+                "trigger_time": cycle_start.isoformat(),
+                "window_start": cycle_start.isoformat(),
+                "window_end": all_times[-1].isoformat(),
+                "duration_s": round(duration, 1),
+                "result": "unknown", "breakthrough": False,
+            })
+
+    return cycles
 
 
 def _normalize_time(time_str):

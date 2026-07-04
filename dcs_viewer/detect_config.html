@@ -262,8 +262,11 @@ function openAddConfig(){
     document.getElementById('cfgMaxS').value = '3600';
     document.getElementById('cfgIsDefault').checked = false;
     currentRules = [
-        {signal:'LT_LQFC_57',role:'remote',label:'遥控选择'},
-        {signal:'LT_LQFC_63',role:'crossing',label:'回转位置',threshold:90,tolerance_s:2}
+        {signal:'LT_LQFC_57', role:'remote',    label:'遥控选择'},
+        {signal:'LT_LQFC_59', role:'threshold', label:'倾动压力', threshold:10, operator:'gt'},
+        {signal:'LT_LQFC_69', role:'threshold', label:'回转压力', threshold:10, operator:'gt'},
+        {signal:'LT_LQFC_68', role:'threshold', label:'推进压力', threshold:10, operator:'gt'},
+        {signal:'LT_LQFC_67', role:'threshold', label:'推进比例阀给定', threshold:12, operator:'gt'}
     ];
     renderRules();
     document.getElementById('editModal').classList.add('show');
@@ -346,6 +349,7 @@ function updateRule(idx, field, value){
     currentRules[idx][field] = value;
     if(field==='threshold') currentRules[idx].threshold = parseFloat(value)||0;
     if(field==='tolerance_s') currentRules[idx].tolerance_s = parseInt(value)||2;
+    if(field==='operator') currentRules[idx].operator = value;
 }
 
 function renderRules(){
@@ -358,6 +362,7 @@ function renderRules(){
         html += '<option value="remote" '+(r.role==='remote'?'selected':'')+'>遥控信号</option>';
         html += '<option value="crossing" '+(r.role==='crossing'?'selected':'')+'>穿越阈值</option>';
         html += '<option value="edge" '+(r.role==='edge'?'selected':'')+'>边沿检测</option>';
+        html += '<option value="threshold" '+(r.role==='threshold'?'selected':'')+'>阈值条件</option>';
         html += '</select></div>';
         if(r.role === 'crossing'){
             html += '<div class="form-group" style="flex:0 0 80px"><label>阈值</label><input type="number" value="'+(r.threshold||90)+'" onchange="updateRule('+i+',\'threshold\',this.value)"></div>';
@@ -365,6 +370,10 @@ function renderRules(){
         }
         if(r.role === 'edge'){
             html += '<div class="form-group" style="flex:0 0 90px"><label>方向</label><select onchange="updateRule('+i+',\'edge_dir\',this.value)"><option value="rising" '+(r.edge_dir&&r.edge_dir!=='falling'?'selected':'')+'>上升沿</option><option value="falling" '+(r.edge_dir==='falling'?'selected':'')+'>下降沿</option></select></div>';
+        }
+        if(r.role === 'threshold'){
+            html += '<div class="form-group" style="flex:0 0 80px"><label>阈值</label><input type="number" step="0.01" value="'+(r.threshold||0)+'" onchange="updateRule('+i+',\'threshold\',this.value)"></div>';
+            html += '<div class="form-group" style="flex:0 0 90px"><label>条件</label><select onchange="updateRule('+i+',\'operator\',this.value)"><option value="gt" '+(r.operator!=='lt'?'selected':'')+'>大于</option><option value="lt" '+(r.operator==='lt'?'selected':'')+'>小于</option></select></div>';
         }
         html += '<div class="form-group" style="flex:0 0 60px"><label>标签</label><input value="'+(r.label||'')+'" placeholder="说明" onchange="updateRule('+i+',\'label\',this.value)"></div>';
         html += '<button class="btn-ghost" style="color:#dc2626;margin-top:16px" onclick="removeRule('+i+')">x</button>';
@@ -593,5 +602,6 @@ function deleteResultConfig(id){
 }
 
 loadTuningHistory();
+</script>
 </body>
 </html>

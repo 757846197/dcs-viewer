@@ -559,8 +559,11 @@ def get_model_run(run_id):
 _DEFAULT_OPENING_CONFIG = {
     "type": "opening",
     "rules": [
-        {"signal": "LT_LQFC_57", "role": "remote",  "label": "遥控选择"},
-        {"signal": "LT_LQFC_63", "role": "crossing", "label": "回转位置", "threshold": 90, "tolerance_s": 2}
+        {"signal": "LT_LQFC_57", "role": "remote",     "label": "遥控选择"},
+        {"signal": "LT_LQFC_59", "role": "threshold",  "label": "倾动压力",          "threshold": 10.0, "operator": "gt"},
+        {"signal": "LT_LQFC_69", "role": "threshold",  "label": "回转压力",          "threshold": 10.0, "operator": "gt"},
+        {"signal": "LT_LQFC_68", "role": "threshold",  "label": "推进压力",          "threshold": 10.0, "operator": "gt"},
+        {"signal": "LT_LQFC_67", "role": "threshold",  "label": "推进比例阀给定",     "threshold": 12.0, "operator": "gt"}
     ],
     "filter_min_s": 30,
     "filter_max_s": 3600
@@ -569,8 +572,10 @@ _DEFAULT_OPENING_CONFIG = {
 _DEFAULT_PLUGGING_CONFIG = {
     "type": "plugging",
     "rules": [
-        {"signal": "LT_LQFC_130", "role": "remote",   "label": "遥控启动"},
-        {"signal": "LT_LQFC_134", "role": "edge",     "label": "打泥指令", "edge_dir": "rising"}
+        {"signal": "LT_LQFC_130", "role": "remote",    "label": "遥控启动"},
+        {"signal": "LT_LQFC_135", "role": "threshold", "label": "回转压力",          "threshold": 10.0, "operator": "gt"},
+        {"signal": "LT_LQFC_138", "role": "threshold", "label": "打泥压力",          "threshold": 10.0, "operator": "gt"},
+        {"signal": "LT_LQFC_134", "role": "threshold", "label": "打泥比例阀给定",     "threshold": 12.0, "operator": "gt"}
     ],
     "filter_min_s": 30,
     "filter_max_s": 3600
