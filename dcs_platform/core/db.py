@@ -600,9 +600,8 @@ def get_model_run(run_id):
 _DEFAULT_OPENING_CONFIG = {
     "type": "opening",
     "rules": [
-        {"signal": "LT_LQFC_57", "role": "remote",     "label": "遥控选择"},
-        {"signal": "LT_LQFC_67", "role": "threshold",  "label": "推进位置前进(>-0.5m)", "threshold": -0.5,  "operator": "gt"},
-        {"signal": "LT_LQFC_68", "role": "threshold",  "label": "推进压力(>3MPa)",       "threshold": 3.0,   "operator": "gt"},
+        {"signal": "LT_LQFC_57", "role": "remote",    "label": "遥控选择"},
+        {"signal": "LT_LQFC_63", "role": "crossing",  "label": "回转位置穿越90度", "threshold": 90, "tolerance_s": 2},
     ],
     "filter_min_s": 30,
     "filter_max_s": 3600
@@ -612,9 +611,7 @@ _DEFAULT_PLUGGING_CONFIG = {
     "type": "plugging",
     "rules": [
         {"signal": "LT_LQFC_130", "role": "remote",    "label": "遥控启动"},
-        {"signal": "LT_LQFC_135", "role": "threshold", "label": "回转到位(<50度)",    "threshold": 50.0, "operator": "lt"},
-        {"signal": "LT_LQFC_138", "role": "threshold", "label": "打泥压力(>5MPa)",     "threshold": 5.0,  "operator": "gt"},
-        {"signal": "LT_LQFC_134", "role": "threshold", "label": "打泥指令激活",        "threshold": 0.5,  "operator": "gt"},
+        {"signal": "LT_LQFC_134", "role": "mud_cmd",   "label": "打泥前进边沿(阀>15)", "threshold": 15, "tolerance_s": 2},
     ],
     "filter_min_s": 30,
     "filter_max_s": 3600

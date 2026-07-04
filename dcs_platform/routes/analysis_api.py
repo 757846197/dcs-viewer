@@ -453,9 +453,16 @@ def api_cycles():
     start = _normalize_time(start)
     end = _normalize_time(end)
     
+    # 自适应超时: 根据时间窗口自动调整
+    try:
+        _rs = datetime.fromisoformat(start.replace("Z","+00:00"))
+        _re = datetime.fromisoformat(end.replace("Z","+00:00"))
+        _range_secs = (_re - _rs).total_seconds()
+        _timeout_ms = max(60000, min(180000, int(_range_secs * 1000)))
+    except Exception:
+        _timeout_ms = 60000
+    
     # ── 正确信号配置 ──
-    # 开口机: remote(binary 0/1) + swing_pos(穿越90°阈值)
-    # 堵口机: remote_start(binary 0/1) + mud_cmd(边沿)
     OPENING_CONFIG = {
         "东开口机": {"remote": "LT_LQFC_57", "swing_pos": "LT_LQFC_63",
                       "push_pos": "LT_LQFC_67", "push_press": "LT_LQFC_68",
@@ -513,8 +520,9 @@ def api_cycles():
             
                 detect_params = [remote_sig, swing_sig]
                 try:
-                    data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
-                except Exception:
+                    data = fetch_timeseries(start, end, detect_params, timeout_ms=_timeout_ms)
+                except Exception as e:
+                    logger.warning("Opening detection InfluxDB query failed for %s: %s", machine, e)
                     continue
             
                 remote = _build_time_map(data.get(remote_sig, []))
@@ -579,15 +587,36 @@ def api_cycles():
                 cycles.extend(machine_cycles)
         else:
             # legacy: remote_start==1 AND mud_cmd 边沿
+            # 从规则中读取 mud_cmd 边沿阈值（非二进制信号需要>thr 检测）
+            mud_edge = 0.5  # 默认二进制边沿
+            for rule in plugging_rules:
+                if rule.get("role") == "mud_cmd":
+                    mud_edge = rule.get("threshold", 0.5)
+                    break
+            
             for machine, sig in PLUGGING_CONFIG.items():
-                detect_params = [sig["remote_start"], sig["mud_cmd"]]
+                is_west = "西" in machine
+                # 用规则中的信号覆盖硬编码（支持西设备映射）
+                remote_sig = sig["remote_start"]
+                mud_sig = sig["mud_cmd"]
+                for rule in plugging_rules:
+                    r_sig = rule.get("signal", "")
+                    if is_west and r_sig in _EAST_TO_WEST_MAP:
+                        r_sig = _EAST_TO_WEST_MAP[r_sig]
+                    if rule.get("role") == "remote":
+                        remote_sig = r_sig
+                    elif rule.get("role") == "mud_cmd":
+                        mud_sig = r_sig
+                
+                detect_params = [remote_sig, mud_sig]
                 try:
-                    data = fetch_timeseries(start, end, detect_params, timeout_ms=60000)
-                except Exception:
+                    data = fetch_timeseries(start, end, detect_params, timeout_ms=_timeout_ms)
+                except Exception as e:
+                    logger.warning("Plugging detection InfluxDB query failed for %s: %s", machine, e)
                     continue
             
-                remote_start = _build_time_map(data.get(sig["remote_start"], []))
-                mud_cmd = sorted(data.get(sig["mud_cmd"], []), key=lambda x: x[0])
+                remote_start = _build_time_map(data.get(remote_sig, []))
+                mud_cmd = sorted(data.get(mud_sig, []), key=lambda x: x[0])
             
                 if len(mud_cmd) < 2 or len(remote_start) < 2:
                     continue
@@ -599,14 +628,14 @@ def api_cycles():
                     t = mud_cmd[i][0]
                     ts = t.timestamp()
                 
-                    # Rising edge on mud_cmd (0→1)
-                    if not in_cycle and prev_v < 0.5 and curr_v >= 0.5:
+                    # Rising edge on mud_cmd (crossing mud_edge threshold)
+                    if not in_cycle and prev_v < mud_edge and curr_v >= mud_edge:
                         if _remote_nearby(remote_start, ts, tolerance=2):
                             in_cycle = True
                             cycle_start = t
                 
-                    # Falling edge (1→0) = cycle end
-                    elif in_cycle and prev_v >= 0.5 and curr_v < 0.5:
+                    # Falling edge = cycle end
+                    elif in_cycle and prev_v >= mud_edge and curr_v < mud_edge:
                         duration = (t - cycle_start).total_seconds()
                         if 30 <= duration <= 3600:
                             cycles.append({
@@ -636,7 +665,17 @@ def api_cycles():
     cycles.sort(key=lambda c: c["trigger_time"])
     
     # ── 批量提取指标和结果判定（基于判定规则配置）──
-    _enrich_cycles_with_metrics(cycles, start, end)
+    # 大时间范围跳过批量 enrich（InfluxDB 查询量过大），cycles 保留 'unknown' 结果
+    # 前端点「详情」时再通过 /api/analysis/metrics 逐个评估
+    try:
+        range_start = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        range_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        range_days = (range_end - range_start).total_seconds() / 86400
+    except Exception:
+        range_days = 0
+    
+    if range_days <= 1.5 and cycles:
+        _enrich_cycles_with_metrics(cycles, start, end)
     
     # ── 去重并存入数据库 ──
     saved_count = 0
@@ -875,18 +914,29 @@ def _detect_threshold_cycles(start, end, rules, filter_cfg, cycle_type, machine_
 
 
 def _normalize_time(time_str):
-    """Normalize time to RFC3339 UTC: '2026-07-03T00:00' -> '2026-07-03T00:00:00Z'"""
+    """Normalize time to RFC3339 UTC.
+    
+    前端发送本地时间(北京时间 UTC+8, 无时区标记), 需转为 UTC 再查 InfluxDB.
+    '2026-07-03T00:00' -> '2026-07-02T16:00:00Z'
+    已有 Z/+xx:xx 后缀的保持不变.
+    """
     if not time_str:
         return time_str
-    # Already has seconds + timezone
+    # Already has timezone marker
     if "Z" in time_str or "+" in time_str[-6:]:
         return time_str
     # Has seconds but no timezone: add Z
     if len(time_str) >= 19 and time_str[10] == 'T':
         return time_str + "Z"
-    # No seconds: "2026-07-03T00:00" -> "2026-07-03T00:00:00Z"
+    # No seconds: "2026-07-03T00:00" — assume Beijing local, convert to UTC
     if "T" in time_str:
-        return time_str + ":00Z"
+        try:
+            from datetime import timedelta
+            dt = datetime.fromisoformat(time_str)
+            dt = dt - timedelta(hours=8)  # Beijing UTC+8 → UTC
+            return dt.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+        except Exception:
+            return time_str + ":00Z"
     return time_str
 
 
