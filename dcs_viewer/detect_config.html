@@ -475,9 +475,9 @@ function renderResultConfigs(){
         if(!groups[key]) groups[key] = [];
         groups[key].push(c);
     });
-    var catLabels = {success:'成功判定', fail:'失败判定', incomplete:'未完成判定', unfinished:'未完整判定'};
+    var catLabels = {success:'成功判定', fail:'失败判定', incomplete:'未完成判定', unfinished:'未完整判定', breakthrough:'钻透判定', depth:'铁口深度计算'};
     var html = '';
-    ['success','fail','incomplete','unfinished'].forEach(function(cat){
+    ['success','fail','incomplete','unfinished','breakthrough','depth'].forEach(function(cat){
         var items = groups[cat] || [];
         html += '<div style="margin-bottom:16px">';
         html += '<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px">'+(catLabels[cat]||cat)+'</div>';
@@ -502,7 +502,7 @@ function renderResultConfigs(){
 
 function openAddResultConfig(){
     var type = document.getElementById('fResultType').value;
-    var catLabels = {success:'成功', fail:'失败', incomplete:'未完成', unfinished:'未完整'};
+    var catLabels = {success:'成功', fail:'失败', incomplete:'未完成', unfinished:'未完整', breakthrough:'钻透', depth:'铁口深度计算'};
     showResultForm(null, {name:'新判定规则', cycle_type:type, category:'success', params:[
         {param_name:'',value:0,unit:'',data_type:'float',range_min:0,range_max:100,label:'参数1',operator:'gt'}
     ], logic_op:'AND', description:''});
@@ -519,8 +519,8 @@ function showResultForm(id, cfg){
     html += '<div class="modal-body">';
     html += '<div class="form-row"><div class="form-group"><label>名称</label><input id="rfName" value="'+cfg.name+'"></div>';
     html += '<div class="form-group" style="flex:0 0 130px"><label>分类</label><select id="rfCategory">';
-    ['success','fail','incomplete','unfinished'].forEach(function(c){
-        html += '<option value="'+c+'"'+(cfg.category===c?' selected':'')+'>'+({success:'成功',fail:'失败',incomplete:'未完成',unfinished:'未完整'})[c]+'</option>';
+    ['success','fail','incomplete','unfinished','breakthrough','depth'].forEach(function(c){
+        html += '<option value="'+c+'"'+(cfg.category===c?' selected':'')+'>'+({success:'成功',fail:'失败',incomplete:'未完成',unfinished:'未完整',breakthrough:'钻透',depth:'铁口深度计算'})[c]+'</option>';
     });
     html += '</select></div></div>';
     html += '<div class="form-group" style="margin-bottom:12px"><label>描述</label><input id="rfDesc" value="'+(cfg.description||'')+'"></div>';

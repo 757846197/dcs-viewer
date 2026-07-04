@@ -175,12 +175,12 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now'))
         );
 
-        -- 判定规则配置（结果分类: 成功/失败/未完成/未完整）
+        -- 判定规则配置（结果分类: 成功/失败/未完成/未完整/钻透/铁口深度）
         CREATE TABLE IF NOT EXISTS result_judge_configs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,                    -- 配置名称
             cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
-            category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished')),
+            category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth')),
             description TEXT DEFAULT '',            -- 判定条件描述
             params_json TEXT NOT NULL,              -- [{param_name, value, unit, data_type, range_min, range_max}]
             logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
@@ -679,6 +679,20 @@ _DEFAULT_RESULT_PARAMS = {
             {"param_name": "has_drill_no_breakthrough", "value": 1, "unit": "", "data_type": "bool",
              "range_min": 0, "range_max": 1, "label": "有钻进但未钻透", "operator": "eq"},
         ]},
+        "breakthrough": {"name": "钻透判定", "logic": "AND", "params": [
+            {"param_name": "drill_pos_reach", "value": 1.5, "unit": "m", "data_type": "float",
+             "range_min": 0.5, "range_max": 3.0, "label": "钻头到位深度", "operator": "gte"},
+            {"param_name": "impact_press_drop", "value": 5.0, "unit": "MPa", "data_type": "float",
+             "range_min": 2.0, "range_max": 20.0, "label": "冲击压力骤降", "operator": "lt"},
+        ]},
+        "depth": {"name": "铁口深度计算", "logic": "AND", "params": [
+            {"param_name": "opening_duration_min", "value": 60, "unit": "s", "data_type": "int",
+             "range_min": 30, "range_max": 300, "label": "最小开口时长", "operator": "gte"},
+            {"param_name": "push_total_distance", "value": 1.0, "unit": "m", "data_type": "float",
+             "range_min": 0.5, "range_max": 2.5, "label": "推进总行程", "operator": "gte"},
+            {"param_name": "depth_ratio", "value": 0.8, "unit": "", "data_type": "float",
+             "range_min": 0.5, "range_max": 1.0, "label": "深度达标比例", "operator": "gte"},
+        ]},
     },
     "plugging": {
         "success": {"name": "堵口成功判定", "logic": "AND", "params": [
@@ -694,6 +708,20 @@ _DEFAULT_RESULT_PARAMS = {
         "unfinished": {"name": "堵口未完整判定", "logic": "AND", "params": [
             {"param_name": "mud_done_hold_short", "value": 1, "unit": "", "data_type": "bool",
              "range_min": 0, "range_max": 1, "label": "打泥完成但保压不足", "operator": "eq"},
+        ]},
+        "breakthrough": {"name": "钻透判定", "logic": "AND", "params": [
+            {"param_name": "mud_press_peak", "value": 15.0, "unit": "MPa", "data_type": "float",
+             "range_min": 5.0, "range_max": 30.0, "label": "打泥压力峰值", "operator": "gte"},
+            {"param_name": "mud_qty_total", "value": 80, "unit": "kg", "data_type": "float",
+             "range_min": 30, "range_max": 300, "label": "堵口打泥总量", "operator": "gte"},
+        ]},
+        "depth": {"name": "铁口深度计算", "logic": "AND", "params": [
+            {"param_name": "plugging_duration_min", "value": 45, "unit": "s", "data_type": "int",
+             "range_min": 20, "range_max": 180, "label": "最小堵口时长", "operator": "gte"},
+            {"param_name": "mud_flow_total", "value": 60, "unit": "kg", "data_type": "float",
+             "range_min": 20, "range_max": 200, "label": "总打泥流量", "operator": "gte"},
+            {"param_name": "depth_ratio", "value": 0.75, "unit": "", "data_type": "float",
+             "range_min": 0.5, "range_max": 1.0, "label": "深度达标比例", "operator": "gte"},
         ]},
     }
 }
@@ -853,5 +881,44 @@ def get_tuning_history(config_id=None, limit=50):
     q += " ORDER BY changed_at DESC LIMIT ?"; args.append(limit)
     return [dict(r) for r in _get_conn().execute(q, args).fetchall()]
 
+def _migrate_result_judge_configs():
+    """迁移 result_judge_configs 表: 添加 breakthrough/depth 分类"""
+    conn = _get_conn()
+    # 检查是否已有新分类
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(result_judge_configs)").fetchall()]
+    except Exception:
+        return  # 表不存在, CREATE TABLE IF NOT EXISTS 会处理
+    if 'category' not in cols:
+        return
+    
+    # 检查现有约束
+    info = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='result_judge_configs'").fetchone()
+    if not info:
+        return
+    sql_def = info[0]
+    if 'breakthrough' in sql_def and 'depth' in sql_def:
+        return  # 已迁移
+    
+    # 执行迁移: 备份旧表 → 创建新表 → 恢复数据
+    conn.execute("ALTER TABLE result_judge_configs RENAME TO result_judge_configs_old")
+    conn.execute("""CREATE TABLE result_judge_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
+        category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth')),
+        description TEXT DEFAULT '',
+        params_json TEXT NOT NULL,
+        logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
+        enabled INTEGER DEFAULT 1,
+        is_default INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""")
+    conn.execute("INSERT INTO result_judge_configs SELECT * FROM result_judge_configs_old")
+    conn.execute("DROP TABLE result_judge_configs_old")
+    conn.commit()
+
 init_db()
+_migrate_result_judge_configs()
 seed_default_result_configs()
