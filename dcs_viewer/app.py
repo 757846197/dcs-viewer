@@ -237,13 +237,17 @@ def _serve_static(filename):
         _bundle_static = _Path(sys._MEIPASS) / "dcs_viewer" / "static"
         _fp = _bundle_static / filename
         if _fp.exists():
-            return _send_from_directory(str(_bundle_static), filename)
+            resp = _send_from_directory(str(_bundle_static), filename)
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return resp
     # 2) 开发模式：文件系统中的 static 目录
     for _root in [_EXE_DIR / "dcs_viewer" / "static", _BASE_DIR / "dcs_viewer" / "static",
                   _BASE_DIR / "static"]:
         _fp = _root / filename
         if _fp.exists():
-            return _send_from_directory(str(_root), filename)
+            resp = _send_from_directory(str(_root), filename)
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return resp
     return "File not found", 404
 
 
