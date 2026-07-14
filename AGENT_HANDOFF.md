@@ -22,6 +22,7 @@
 ## 2. 当前进度 & 已完成任务
 
 ### 已完成 (最近 7 天)
+- [x] 创建作业分析完整业务流程说明书 (`docs/analysis-flow.md`) (`@senior-developer`)
 - [x] 所有页面标签统一从变量配置表动态读取 (`_build_dynamic_labels`) 修改即时生效 (`@senior-developer`)
 - [x] 规则表中文化+优先级+静态兜底: priority/is_static/fallback 字段 + 冲突解决策略 (`@senior-developer`)
 - [x] 88 条变量名按标准映射表逐条修正 + 数据类型统一为 float (`@senior-developer`)
