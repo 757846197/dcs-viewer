@@ -110,7 +110,7 @@ td{padding:10px 12px;border-bottom:1px solid #f1f5f9}
                     <button class="btn btn-primary" style="margin-left:auto" onclick="openAddConfig()">+ 新建配置</button>
                 </div>
                 <div class="card-body">
-                    <table><thead><tr><th>名称</th><th>类型</th><th>规则数</th><th>默认</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+                    <table><thead><tr><th>名称</th><th>类型</th><th>规则数</th><th>绑定判定</th><th>绑定告警</th><th>默认</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
                     <tbody id="configBody"><tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:24px">加载中...</td></tr></tbody></table>
                 </div>
             </div>
@@ -239,6 +239,8 @@ function renderTable(){
         html += '<td><strong>'+c.name+'</strong>'+(c.description?'<br><span style="font-size:10px;color:#94a3b8">'+c.description+'</span>':'')+'</td>';
         html += '<td>'+typeLabel+'</td>';
         html += '<td>'+rules+' 条</td>';
+        html += '<td><span style="color:'+(c.bound_judge_count>0?'#059669':'#94a3b8')+'">'+c.bound_judge_count+' 判定规则</span></td>';
+        html += '<td><span style="color:'+(c.bound_group_count>0?'#059669':'#94a3b8')+'">'+c.bound_group_count+' 告警组</span></td>';
         html += '<td>'+(c.is_default?'<span class="tag tag-ok">默认</span>':'<span class="tag tag-off">否</span>')+'</td>';
         html += '<td>'+(c.enabled?'<span class="tag tag-ok">启用</span>':'<span class="tag tag-off">停用</span>')+'</td>';
         html += '<td style="font-size:11px;color:#94a3b8">'+(c.updated_at||c.created_at||'--')+'</td>';

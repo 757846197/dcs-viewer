@@ -91,9 +91,18 @@ def api_ping():
 
 @analysis_bp.route("/detect-configs")
 def api_detect_configs():
-    """GET /api/analysis/detect-configs?type=opening"""
+    """GET /api/analysis/detect-configs?type=opening  含绑定统计"""
+    from dcs_platform.core.db import _get_conn
     cycle_type = request.args.get("type", "").strip() or None
     configs = get_detect_configs(cycle_type=cycle_type)
+    for c in configs:
+        did = c.get("id")
+        c["bound_judge_count"] = _get_conn().execute(
+            "SELECT COUNT(*) FROM result_judge_configs WHERE detect_config_id=? AND enabled=1", (did,)
+        ).fetchone()[0]
+        c["bound_group_count"] = _get_conn().execute(
+            "SELECT COUNT(*) FROM rule_groups WHERE detect_config_id=? AND enabled=1", (did,)
+        ).fetchone()[0]
     return jsonify({"configs": configs, "count": len(configs)})
 
 
@@ -240,7 +249,8 @@ def api_create_result_config():
         data.get("is_default", 0),
         data.get("description", ""),
         data.get("priority", 0),
-        data.get("is_static", 0)
+        data.get("is_static", 0),
+        data.get("detect_config_id", 0)
     )
     return jsonify({"ok": True, "id": config_id})
 
@@ -260,7 +270,8 @@ def api_update_result_config(config_id):
         data.get("is_default", existing.get("is_default", 0)),
         data.get("description", existing.get("description", "")),
         data.get("priority", existing.get("priority", 0)),
-        data.get("is_static", existing.get("is_static", 0))
+        data.get("is_static", existing.get("is_static", 0)),
+        data.get("detect_config_id", existing.get("detect_config_id", 0))
     )
     return jsonify({"ok": True})
 

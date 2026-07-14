@@ -384,17 +384,17 @@ def export_labels(cycle_type=None):
 #  规则引擎 CRUD
 # ===================================================================
 
-def upsert_rule_group(group_id, cycle_type, name, description="", logic_op="AND", priority=0, enabled=1):
+def upsert_rule_group(group_id, cycle_type, name, description="", logic_op="AND", priority=0, enabled=1, detect_config_id=0):
     conn = _get_conn()
     if group_id:
         conn.execute(
-            "UPDATE rule_groups SET cycle_type=?,name=?,description=?,logic_op=?,priority=?,enabled=?,updated_at=datetime('now') WHERE id=?",
-            (cycle_type, name, description, logic_op, priority, enabled, group_id))
+            "UPDATE rule_groups SET cycle_type=?,name=?,description=?,logic_op=?,priority=?,enabled=?,detect_config_id=?,updated_at=datetime('now') WHERE id=?",
+            (cycle_type, name, description, logic_op, priority, enabled, detect_config_id, group_id))
         conn.commit()
         return group_id
     c = conn.execute(
-        "INSERT INTO rule_groups(cycle_type,name,description,logic_op,priority,enabled) VALUES(?,?,?,?,?,?)",
-        (cycle_type, name, description, logic_op, priority, enabled))
+        "INSERT INTO rule_groups(cycle_type,name,description,logic_op,priority,enabled,detect_config_id) VALUES(?,?,?,?,?,?,?)",
+        (cycle_type, name, description, logic_op, priority, enabled, detect_config_id))
     conn.commit()
     return c.lastrowid
 
@@ -832,17 +832,17 @@ def get_default_result_config(cycle_type, category):
         return get_result_judge_config(config_id)
     return None
 
-def upsert_result_judge_config(config_id, name, cycle_type, category, params_json, logic_op="AND", is_default=0, description="", priority=0, is_static=0):
+def upsert_result_judge_config(config_id, name, cycle_type, category, params_json, logic_op="AND", is_default=0, description="", priority=0, is_static=0, detect_config_id=0):
     conn = _get_conn()
     if config_id:
         conn.execute(
-            "UPDATE result_judge_configs SET name=?,params_json=?,logic_op=?,is_default=?,description=?,priority=?,is_static=?,updated_at=datetime('now') WHERE id=?",
-            (name, params_json, logic_op, is_default, description, priority, is_static, config_id))
+            "UPDATE result_judge_configs SET name=?,params_json=?,logic_op=?,is_default=?,description=?,priority=?,is_static=?,detect_config_id=?,updated_at=datetime('now') WHERE id=?",
+            (name, params_json, logic_op, is_default, description, priority, is_static, detect_config_id, config_id))
         conn.commit()
         return config_id
     c = conn.execute(
-        "INSERT INTO result_judge_configs(name,cycle_type,category,params_json,logic_op,is_default,description,priority,is_static) VALUES(?,?,?,?,?,?,?,?,?)",
-        (name, cycle_type, category, params_json, logic_op, is_default, description, priority, is_static))
+        "INSERT INTO result_judge_configs(name,cycle_type,category,params_json,logic_op,is_default,description,priority,is_static,detect_config_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (name, cycle_type, category, params_json, logic_op, is_default, description, priority, is_static, detect_config_id))
     conn.commit()
     return c.lastrowid
 
