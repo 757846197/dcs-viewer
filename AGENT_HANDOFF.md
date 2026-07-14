@@ -60,7 +60,8 @@
 
 - [x] 规则页面 opening/plugging 增加 detect_config 绑定下拉 (`@senior-developer`)
 - [x] 检测规则页面信号选择切换为变量配置下拉+中文标签 (`@senior-developer`)
-- [ ] 作业分析周期列表添加"刷新"按钮 (避免重复加载)
+- [x] 作业分析周期列表添加"刷新列表"按钮 (免InfluxDB查询, 仅重渲染) (`@senior-developer`)
+- [x] Git push 恢复 — 累积 16 次 commit 已全部推送 (`59499d1`)
 
 ### P2 — 中优先级
 
