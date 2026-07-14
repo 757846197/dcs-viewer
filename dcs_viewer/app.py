@@ -232,32 +232,38 @@ from flask import send_from_directory as _send_from_directory
 
 @app.route("/static/<path:filename>")
 def _serve_static(filename):
-    # 1) PyInstaller 打包：_MEIPASS 中查找
+    from flask import send_file as _send_file
+    # PyInstaller 打包 & 开发模式：统一走文件系统查找
+    candidates = []
     if getattr(sys, 'frozen', False):
-        _bundle_static = _Path(sys._MEIPASS) / "dcs_viewer" / "static"
-        _fp = _bundle_static / filename
-        if _fp.exists():
-            resp = _send_from_directory(str(_bundle_static), filename)
-            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            return resp
-    # 2) 开发模式：文件系统中的 static 目录
-    for _root in [_EXE_DIR / "dcs_viewer" / "static", _BASE_DIR / "dcs_viewer" / "static",
-                  _BASE_DIR / "static"]:
-        _fp = _root / filename
-        if _fp.exists():
-            resp = _send_from_directory(str(_root), filename)
-            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            return resp
+        candidates.append(_Path(sys._MEIPASS) / "dcs_viewer" / "static" / filename)
+    candidates.extend([
+        _EXE_DIR / "dcs_viewer" / "static" / filename,
+        _BASE_DIR / "dcs_viewer" / "static" / filename,
+        _BASE_DIR / "static" / filename,
+    ])
+    for _fp in candidates:
+        if _fp.is_file():
+            return _send_file(_fp, max_age=0)
     return "File not found", 404
 
 
 # === 调试端点（检查配置值，发布前可删除）===
 @app.route("/debug-config")
 def _debug_config():
+    import os as _os
+    meipass_files = []
+    if getattr(sys, 'frozen', False):
+        mp = _Path(sys._MEIPASS)
+        for root, dirs, files in _os.walk(str(mp)):
+            for f in files:
+                rp = _Path(root) / f
+                meipass_files.append(str(rp.relative_to(mp)))
     return jsonify({
         "SETTINGS_PASSWORD": repr(SETTINGS_PASSWORD),
-        "match_admin123": SETTINGS_PASSWORD == "admin123",
         "APP_TOKEN": repr(APP_TOKEN),
+        "frozen": getattr(sys, 'frozen', False),
+        "_MEIPASS_files": meipass_files[:200],
     })
 
 
@@ -2156,7 +2162,7 @@ if __name__ == "__main__":
     else:
         # PyInstaller 环境，等待 Flask 完全启动后再打开
         def _open_browser():
-            _time.sleep(1.5)
+            _time.sleep(3.0)   # waitress 在 PyInstaller 中启动较慢
             webbrowser.open(f"http://localhost:{FLASK_PORT}")
         threading.Thread(target=_open_browser, daemon=True).start()
     try:
