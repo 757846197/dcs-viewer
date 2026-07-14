@@ -641,13 +641,13 @@ function renderCycles(){
         var keyMetric = '';
         var mt = c.metrics || {};
         if(c.type=='opening'){
-            var depthName = getLabel('LT_LQFC_67') || '推进位置';
-            var pressName = getLabel('LT_LQFC_68') || '推进压力';
+            var depthName = getLabel('LT_LQFC_67') || '东开口机推进位置';
+            var pressName = getLabel('LT_LQFC_68') || '东开口机推进压力';
             keyMetric = depthName + ' ' + (c.push_pos_change||mt.push_depth||0).toFixed(3) + 'm | ' + pressName + '峰' + (c.push_press_peak||mt.push_press_max||0).toFixed(0) + 'MPa';
             if(c.breakthrough) keyMetric += ' | 已钻透';
         }else{
-            var mudName = getLabel('LT_LQFC_179') || '打泥量';
-            var mudPressName = getLabel('LT_LQFC_138') || '打泥压力';
+            var mudName = getLabel('LT_LQFC_179') || '东堵口机打泥量';
+            var mudPressName = getLabel('LT_LQFC_138') || '东堵口机打泥压力';
             keyMetric = mudName + ' ' + (c.mud_qty||mt.mud_qty||0).toFixed(1) + ' | ' + mudPressName + '峰' + (c.mud_press_peak||mt.mud_press_peak||0).toFixed(0) + 'MPa';
             if(c.hold_ok||mt.hold_ok) keyMetric += ' | 保压OK';
         }
@@ -692,14 +692,14 @@ function showDetail(idx){
 function renderMetrics(m){
     var html = '';
     if(m.type=='opening'){
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_67')||'推进位置')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_68')||'推进压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_87')||'转钎压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_67')||'东开口机推进位置')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_68')||'东开口机推进压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_87')||'东开口机转钎压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_69')||'冲击状态')+'</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_69')||'东开口机冲击开/关')+'</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
     }else{
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_179')||'打泥量')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_138')||'打泥压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_179')||'东堵口机打泥量')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_138')||'东堵口机打泥压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格 (≥60s)':'保压不足 (<60s)')+'</div></div>';
     }
     document.getElementById('detailMetrics').innerHTML = html;
