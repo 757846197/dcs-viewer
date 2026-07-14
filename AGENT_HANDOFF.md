@@ -22,6 +22,7 @@
 ## 2. 当前进度 & 已完成任务
 
 ### 已完成 (最近 7 天)
+- [x] 所有页面标签统一从变量配置表动态读取 (消除硬编码) (@senior-developer)
 
 - [x] 变量采集配置表 `variable_configs` — DB + API + 前端 CRUD 完成 (`@senior-developer`)
 - [x] 作业分析页面标签配置驱动 (`loadLabelMap` 替代硬编码) (`@senior-developer`)

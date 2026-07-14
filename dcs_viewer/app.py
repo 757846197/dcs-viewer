@@ -355,6 +355,20 @@ with open(GROUPS_FILE, "r", encoding="utf-8") as f:
 # === 性能优化：预映射标签，避免每个记录都查字典 ===
 _LABELS = PARAM_CONFIG.get("labels", {})
 
+def _build_dynamic_labels():
+    """从 variable_configs 表动态构建标签映射, 优先于静态 _LABELS"""
+    try:
+        from dcs_platform.core.db import _get_conn
+        rows = _get_conn().execute(
+            "SELECT tag_name, chinese_name FROM variable_configs WHERE is_active=1"
+        ).fetchall()
+        labels = dict(_LABELS)  # 静态兜底
+        for tag, name in rows:
+            labels[tag] = name   # DB 覆盖同名 tag
+        return labels
+    except Exception:
+        return dict(_LABELS)
+
 def _load_html_template(filename):
     candidates = [
         _EXE_DIR / "dcs_viewer" / "templates" / filename,
@@ -533,7 +547,7 @@ def index():
         else:
             return render_template_string(LOGIN_HTML.replace("{{ app_token }}", APP_TOKEN or ""))
     html = INDEX_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
-    html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
+    html = html.replace("{{ labels_json | safe }}", json.dumps(_build_dynamic_labels()))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
     return render_template_string(html)
 
@@ -632,7 +646,7 @@ def api_query():
         tables = query_api.query(flux)
         rows = []
         param_set = set()
-        labels = _LABELS
+        labels = _build_dynamic_labels()
         for table in tables:
             for record in table.records:
                 t = record.get_time()
@@ -1014,7 +1028,7 @@ TREND_HTML = _load_html_template("trend.html") or ""
 @login_required
 def realtime():
     html = REALTIME_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
-    html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
+    html = html.replace("{{ labels_json | safe }}", json.dumps(_build_dynamic_labels()))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
     return render_template_string(html)
 
@@ -1250,7 +1264,7 @@ def api_trend_events():
 @login_required
 def trend():
     html = TREND_HTML.replace("{{ groups_json | safe }}", json.dumps(PARAM_CONFIG["groups"]))
-    html = html.replace("{{ labels_json | safe }}", json.dumps(_LABELS))
+    html = html.replace("{{ labels_json | safe }}", json.dumps(_build_dynamic_labels()))
     html = html.replace("{{ app_token }}", APP_TOKEN or "")
     resp = make_response(render_template_string(html))
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
