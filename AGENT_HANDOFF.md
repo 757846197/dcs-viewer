@@ -22,12 +22,12 @@
 ## 2. 当前进度 & 已完成任务
 
 ### 已完成 (最近 7 天)
-- [x] 所有页面标签统一从变量配置表动态读取 (消除硬编码) (@senior-developer)
-
+- [x] 所有页面标签统一从变量配置表动态读取 (`_build_dynamic_labels`) 修改即时生效 (`@senior-developer`)
+- [x] 规则表中文化+优先级+静态兜底: priority/is_static/fallback 字段 + 冲突解决策略 (`@senior-developer`)
+- [x] 88 条变量名按标准映射表逐条修正 + 数据类型统一为 float (`@senior-developer`)
+- [x] Agent 交接协议文档 `AGENT_HANDOFF.md` 创建并纳入 Git (`@senior-developer`)
 - [x] 变量采集配置表 `variable_configs` — DB + API + 前端 CRUD 完成 (`@senior-developer`)
 - [x] 作业分析页面标签配置驱动 (`loadLabelMap` 替代硬编码) (`@senior-developer`)
-- [x] 规则表重构: `priority` + `is_static` + `fallback` 分类 (`@senior-developer`)
-- [x] 68 条变量中文名按标准映射表统一修正 (`@senior-developer`)
 - [x] 开口检测切换为 legacy 穿越算法 (修复 LT_LQFC_67 阈值 100→-0.5m) (`@senior-developer`)
 - [x] 堵口检测 mud_cmd 边缘阈值修正 (0.5→15, 三态信号 4/12/20) (`@senior-developer`)
 - [x] EXE 打包: 静态文件 `send_from_directory`→`send_file` 修复 404 (`@senior-developer`)
@@ -51,12 +51,11 @@
 
 ### P0 — 阻断
 
-- [ ] EXE 需要重新打包 (包含最新 HTML + DB 修改)
+- [ ] **EXE 需要重新打包** (包含最新 HTML + DB 修改, 含 `_build_dynamic_labels` + 规则表 + 变量名修正)
 - [ ] `.env.example` 需同步到 `dist/` 目录
 
 ### P1 — 高优先级
 
-- [ ] self_tuning 调度器: APScheduler 未打包 (EXE 启动日志: "APScheduler 未安装")
 - [ ] 规则页面 (`rules_opening/plugging.html`) 添加 priority 和 is_static 编辑功能
 - [ ] 检测规则页面支持中文编辑维护
 - [ ] 作业分析周期列表添加"刷新"按钮 (避免重复加载)
@@ -121,10 +120,10 @@ dcs_platform/         ← 后端业务逻辑
 
 | 问题 | 严重度 | 状态 |
 |------|--------|------|
+| 规则页面 (`rules_opening/plugging.html`) 添加 priority 和 is_static 编辑 UI | 中 | [ ] 后端支持已就绪, 前端待开发 |
 | EXE 打包后需重新测试所有页面 | 中 | [~] 最近一次打包 07-14, 含最新更改 |
 | GitHub Push 间歇性连接失败 | 低 | commit 本地保存, 网络恢复后补 push |
 | InfluxDB Token 仍存在于 `config.py` 环境变量默认值 | 高 | 应改为空白, 仅从 .env 读取 |
-| APScheduler 未打包到 EXE | 中 | 自整定功能在 EXE 中不可用 |
 | 两个进程抢 5000 端口时前端连到旧进程 | 中 | DEV+EXE 同时运行时需手动 kill |
 
 ---
@@ -210,6 +209,6 @@ dist/DCSViewer.exe
 
 ---
 
-> **最后更新**: 2026-07-14 12:47 CST  
+> **最后更新**: 2026-07-14 13:00 CST  
 > **更新者**: @senior-developer  
-> **下一接手 Agent**: @Codex — 请从 Section 3 P0 任务开始
+> **下一接手 Agent**: @Codex — 请从 Section 3 P1 任务开始
