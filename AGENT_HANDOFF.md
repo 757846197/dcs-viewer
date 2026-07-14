@@ -22,6 +22,7 @@
 ## 2. 当前进度 & 已完成任务
 
 ### 已完成 (最近 7 天)
+- [x] 规则表绑定检测规则: `detect_config_id` 全链路 + rule_groups 参与评估 (`@senior-developer`)
 - [x] 创建作业分析完整业务流程说明书 (`docs/analysis-flow.md`) (`@senior-developer`)
 - [x] 所有页面标签统一从变量配置表动态读取 (`_build_dynamic_labels`) 修改即时生效 (`@senior-developer`)
 - [x] 规则表中文化+优先级+静态兜底: priority/is_static/fallback 字段 + 冲突解决策略 (`@senior-developer`)
@@ -52,13 +53,13 @@
 
 ### P0 — 阻断
 
-- [ ] **EXE 需要重新打包** (包含最新 HTML + DB 修改, 含 `_build_dynamic_labels` + 规则表 + 变量名修正)
+- [x] **EXE 已重新打包** (`dist/DCSViewer.exe`, 含 `_build_dynamic_labels` + 规则表绑定 + 变量名修正 + 检测规则中文) (`@senior-developer`)
 - [ ] `.env.example` 需同步到 `dist/` 目录
 
 ### P1 — 高优先级
 
-- [ ] 规则页面 (`rules_opening/plugging.html`) 添加 priority 和 is_static 编辑功能
-- [ ] 检测规则页面支持中文编辑维护
+- [x] 规则页面 opening/plugging 增加 detect_config 绑定下拉 (`@senior-developer`)
+- [x] 检测规则页面信号选择切换为变量配置下拉+中文标签 (`@senior-developer`)
 - [ ] 作业分析周期列表添加"刷新"按钮 (避免重复加载)
 
 ### P2 — 中优先级
