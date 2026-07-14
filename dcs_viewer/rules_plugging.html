@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -81,14 +81,14 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
     <div class="nav-section-title" style="padding-top:12px">页面导航</div>
     <a class="nav-item" href="/">历史查询</a>
     <a class="nav-item" href="/analysis">作业分析</a>
-    <a class="nav-item" href="/rules/opening">开口规则</a>
-    <a class="nav-item active" href="/rules/plugging">堵口规则</a>
+    <a class="nav-item active" href="/rules/opening">堵口规则</a>
+    <a class="nav-item" href="/rules/plugging">堵口规则</a>
     <a class="nav-item" href="/knowledge-base">知识库</a>
 </div>
 <div class="main">
     <div class="header">
         <h1>🔧 堵口作业 — 专家规则配置</h1>
-        <span class="badge">Plugging Rules</span>
+        <span class="badge">Opening Rules</span>
         <div class="nav-links">
             <a href="/">历史查询</a>
             <a href="/realtime">实时监控</a>
@@ -96,8 +96,8 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
             <a href="/analysis">作业分析</a>
             <a href="/labeling">循环标注</a>
             <a href="/report">分析报告</a>
-            <a href="/rules/opening">开口规则</a>
-            <a href="/rules/plugging" class="active">堵口规则</a>
+            <a href="/rules/opening" class="active">堵口规则</a>
+            <a href="/rules/plugging">堵口规则</a>
             <a href="/knowledge-base">知识库</a>
             <a href="/detect-config">检测规则</a>
         </div>
@@ -106,7 +106,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
         <div id="alertBox" class="alert"></div>
         <div class="card">
             <div class="card-header">
-                <span>规则组列表 — 开口作业</span>
+                <span>规则组列表 — 堵口作业</span>
                 <button class="btn btn-primary" onclick="openCreateModal()">+ 新建规则组</button>
             </div>
             <div class="card-body" id="ruleGroupList">
@@ -125,6 +125,12 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
                 <select id="groupLogic"><option value="AND">AND — 所有条件均满足才触发</option><option value="OR">OR — 任意条件满足即触发</option></select>
             </div>
             <div class="form-group"><label>优先级 (数字越大越优先)</label><input id="groupPriority" type="number" value="0"></div>
+            <div class="form-group"><label>绑定检测规则</label>
+                <select id="groupDetectConfig">
+                    <option value="0">未绑定 (独立规则)</option>
+                </select>
+                <span style="font-size:10px;color:#94a3b8">绑定后在分析时仅与选中检测规则联动执行</span>
+            </div>
             <hr style="margin:16px 0;border-color:#f1f5f9">
             <label style="font-size:12px;color:#64748b;font-weight:600">条件列表</label>
             <div id="conditionList"></div>
@@ -141,7 +147,7 @@ input:checked+.toggle-slider:before{transform:translateX(20px)}
 <script>
 var APP_TOKEN="{{ app_token }}";
 var CYCLE_TYPE="plugging";
-var OPENING_PARAMS = [];
+var PLUGGING_PARAMS = [];
 var OPERATORS=[
     {id:"gt",label:"大于 (>)"},
     {id:"lt",label:"小于 (<)"},
@@ -153,29 +159,45 @@ var OPERATORS=[
     {id:"change_rate_lt",label:"变化率 <"}
 ];
 var editingGroupId=null;
-var ruleGroups=[];
 
-// 从变量配置 API 加载堵口参数列表
+// 从变量配置 API 加载参数列表
 function loadVariableParams() {
     return fetch('/api/analysis/variable-configs?type=plugging&mode=options&token='+APP_TOKEN)
         .then(function(r){return r.json()})
         .then(function(d){
-            OPENING_PARAMS = (d.options||[]).map(function(v){
+            PLUGGING_PARAMS = (d.options||[]).map(function(v){
                 return {id:v.tag_name, label:v.chinese_name, unit:v.unit, dim:v.dimension};
             });
-            console.log('加载了 '+OPENING_PARAMS.length+' 个堵口变量');
+            console.log('加载了 '+PLUGGING_PARAMS.length+' 个堵口变量');
         })
         .catch(function(e){
             console.error('加载变量配置失败:', e);
-            OPENING_PARAMS = [
-                {id:"LT_LQFC_134",label:"打泥前进/后退",unit:"",dim:"control_valve"},
-                {id:"LT_LQFC_138",label:"打泥压力",unit:"MPa",dim:"pressure"},
-                {id:"LT_LQFC_179",label:"打泥量",unit:"L",dim:"mud"}
+            // 兜底
+            PLUGGING_PARAMS = [
+                {id:"LT_LQFC_67",label:"推进位置",unit:"mm",dim:"position"},
+                {id:"LT_LQFC_68",label:"推进压力",unit:"MPa",dim:"pressure"},
+                {id:"LT_LQFC_69",label:"冲击开/关",unit:"",dim:"remote_command"}
             ];
         });
 }
+var ruleGroups=[];
+var DETECT_CONFIGS = [];  // 可用检测规则列表
 
-function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':'LT_LQFC_'+pid}
+function loadDetectConfigs() {
+    return fetch('/api/analysis/detect-configs?type='+CYCLE_TYPE+'&token='+APP_TOKEN)
+        .then(function(r){return r.json()})
+        .then(function(d){
+            DETECT_CONFIGS = d.configs || [];
+            var sel = document.getElementById('groupDetectConfig');
+            sel.innerHTML = '<option value=\"0\">未绑定 (独立规则)</option>';
+            DETECT_CONFIGS.forEach(function(dc){
+                sel.innerHTML += '<option value=\"'+dc.id+'\">'+dc.name+' ('+dc.cycle_type+'|'+dc.bound_judge_count+'判定|'+dc.bound_group_count+'告警)</option>';
+            });
+        })
+        .catch(function(){ DETECT_CONFIGS = []; });
+}
+
+function getParamLabel(pid){var p=PLUGGING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':'LT_LQFC_'+pid}
 function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textContent=msg;el.className='alert alert-'+cls;setTimeout(function(){el.className='alert';el.textContent=''},5000)}
 function showLoading(msg){document.getElementById('loadingMsg').textContent=msg||'加载中...';document.getElementById('loading').classList.add('show')}
 function hideLoading(){document.getElementById('loading').classList.remove('show')}
@@ -183,7 +205,8 @@ function hideLoading(){document.getElementById('loading').classList.remove('show
 function loadRuleGroups(){
     console.log("loadRuleGroups called, CYCLE_TYPE="+CYCLE_TYPE);
     showLoading('加载规则...');
-    loadVariableParams().then(function() {
+    // 先加载变量配置和检测规则, 再加载规则列表
+    Promise.all([loadPluggingParams(), loadDetectConfigs()]).then(function() {
         return fetch('/api/rules?cycle_type='+CYCLE_TYPE+'&token='+APP_TOKEN);
     }).then(function(r){return r.json()}).then(function(data){
         console.log("API response:",data); ruleGroups=data.groups||[]; console.log("loaded "+ruleGroups.length+" groups");
@@ -227,9 +250,9 @@ function renderRuleGroups(){
     el.innerHTML=html
 }
 
-function openCreateModal(){editingGroupId=null;document.getElementById('modalTitle').textContent='新建规则组';document.getElementById('groupName').value='';document.getElementById('groupDesc').value='';document.getElementById('groupLogic').value='AND';document.getElementById('groupPriority').value=0;document.getElementById('conditionList').innerHTML='';addCondition();document.getElementById('ruleModal').classList.add('show')}
+function openCreateModal(){editingGroupId=null;document.getElementById('modalTitle').textContent='新建规则组';document.getElementById('groupName').value='';document.getElementById('groupDesc').value='';document.getElementById('groupLogic').value='AND';document.getElementById('groupPriority').value=0;document.getElementById('groupDetectConfig').value='0';document.getElementById('conditionList').innerHTML='';addCondition();document.getElementById('ruleModal').classList.add('show')}
 
-function openEditModal(gid){var g=ruleGroups.find(function(x){return x.id===gid});if(!g)return;editingGroupId=gid;document.getElementById('modalTitle').textContent='编辑: '+g.name;document.getElementById('groupName').value=g.name;document.getElementById('groupDesc').value=g.description||'';document.getElementById('groupLogic').value=g.logic_op||'AND';document.getElementById('groupPriority').value=g.priority||0;var cl=document.getElementById('conditionList');cl.innerHTML='';if(g.rules&&g.rules.length>0){g.rules.forEach(function(r){addCondition(r)})}else{addCondition()}document.getElementById('ruleModal').classList.add('show')}
+function openEditModal(gid){var g=ruleGroups.find(function(x){return x.id===gid});if(!g)return;editingGroupId=gid;document.getElementById('modalTitle').textContent='编辑: '+g.name;document.getElementById('groupName').value=g.name;document.getElementById('groupDesc').value=g.description||'';document.getElementById('groupLogic').value=g.logic_op||'AND';document.getElementById('groupPriority').value=g.priority||0;document.getElementById('groupDetectConfig').value=g.detect_config_id||'0';var cl=document.getElementById('conditionList');cl.innerHTML='';if(g.rules&&g.rules.length>0){g.rules.forEach(function(r){addCondition(r)})}else{addCondition()}document.getElementById('ruleModal').classList.add('show')}
 
 function closeModal(){document.getElementById('ruleModal').classList.remove('show')}
 
@@ -237,7 +260,7 @@ function addCondition(data){
     var cl=document.getElementById('conditionList');
     var idx=cl.children.length;
     var div=document.createElement('div');div.className='rule-row';
-    var paramOpts=OPENING_PARAMS.map(function(p){return '<option value="'+p.id+'">'+p.label+' ('+p.unit+')</option>'}).join('');
+    var paramOpts=PLUGGING_PARAMS.map(function(p){return '<option value="'+p.id+'">'+p.label+' ('+p.unit+')</option>'}).join('');
     var opOpts=OPERATORS.map(function(o){return '<option value="'+o.id+'">'+o.label+'</option>'}).join('');
     div.innerHTML=
         '<div class="form-group param"><label>参数</label><select class="cond-param">'+paramOpts+'</select></div>'+
@@ -285,7 +308,7 @@ function saveRuleGroup(){
     var conds=collectConditions();
     if(conds.length===0){showAlert('至少需要一条条件','error');return}
     showLoading('保存中...');
-    var payload={cycle_type:CYCLE_TYPE,name:name,description:document.getElementById('groupDesc').value,logic_op:document.getElementById('groupLogic').value,priority:parseInt(document.getElementById('groupPriority').value)||0,rules:conds};
+    var payload={cycle_type:CYCLE_TYPE,name:name,description:document.getElementById('groupDesc').value,logic_op:document.getElementById('groupLogic').value,priority:parseInt(document.getElementById('groupPriority').value)||0,detect_config_id:parseInt(document.getElementById('groupDetectConfig').value)||0,rules:conds};
     var method='POST',url='/api/rules?token='+APP_TOKEN;
     if(editingGroupId){method='PUT';url='/api/rules/'+editingGroupId+'?token='+APP_TOKEN}
     fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json()}).then(function(d){
