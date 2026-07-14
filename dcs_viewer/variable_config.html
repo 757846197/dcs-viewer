@@ -169,18 +169,18 @@ tr:hover{background:#f0f5ff}
         </div>
         <div class="modal-body">
             <div class="form-row">
-                <div class="form-group"><label>Tag 名称 *</label><input id="efTag" placeholder="LT_LQFC_67"></div>
-                <div class="form-group"><label>中文名称 *</label><input id="efName" placeholder="推进位置"></div>
+                <div class="form-group"><label>变量标识 *</label><input id="efTag" placeholder="输入信号标识符"></div>
+                <div class="form-group"><label>中文名称 *</label><input id="efName" placeholder="如: 东开口机推进位置"></div>
             </div>
             <div class="form-row">
                 <div class="form-group"><label>单位</label><input id="efUnit" placeholder="mm / MPa / deg / L"></div>
-                <div class="form-group"><label>数据类型</label><select id="efDtype"><option value="float">float</option><option value="int">int</option><option value="bool">bool</option></select></div>
+                <div class="form-group"><label>数据类型</label><select id="efDtype"><option value="float">浮点数</option><option value="int">整数</option><option value="bool">布尔值</option></select></div>
             </div>
             <div class="form-row">
                 <div class="form-group"><label>作业类型</label><select id="efCycle">
-                    <option value="common">公共 (common)</option>
-                    <option value="opening">开口作业 (opening)</option>
-                    <option value="plugging">堵口作业 (plugging)</option>
+                    <option value="common">公共</option>
+                    <option value="opening">开口作业</option>
+                    <option value="plugging">堵口作业</option>
                 </select></div>
                 <div class="form-group"><label>所属设备</label><select id="efEquip">
                     <option value="">无</option>
