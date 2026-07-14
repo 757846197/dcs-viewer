@@ -197,7 +197,7 @@ function loadDetectConfigs() {
         .catch(function(){ DETECT_CONFIGS = []; });
 }
 
-function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label+' ('+p.unit+')':'LT_LQFC_'+pid}
+function getParamLabel(pid){var p=OPENING_PARAMS.find(function(x){return x.id===pid});return p?p.label:pid}
 function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textContent=msg;el.className='alert alert-'+cls;setTimeout(function(){el.className='alert';el.textContent=''},5000)}
 function showLoading(msg){document.getElementById('loadingMsg').textContent=msg||'加载中...';document.getElementById('loading').classList.add('show')}
 function hideLoading(){document.getElementById('loading').classList.remove('show')}
@@ -260,7 +260,7 @@ function addCondition(data){
     var cl=document.getElementById('conditionList');
     var idx=cl.children.length;
     var div=document.createElement('div');div.className='rule-row';
-    var paramOpts=OPENING_PARAMS.map(function(p){return '<option value="'+p.id+'">'+p.label+' ('+p.unit+')</option>'}).join('');
+    var paramOpts=OPENING_PARAMS.map(function(p){return '<option value="'+p.id+'">'+p.label+'</option>'}).join('');
     var opOpts=OPERATORS.map(function(o){return '<option value="'+o.id+'">'+o.label+'</option>'}).join('');
     div.innerHTML=
         '<div class="form-group param"><label>参数</label><select class="cond-param">'+paramOpts+'</select></div>'+

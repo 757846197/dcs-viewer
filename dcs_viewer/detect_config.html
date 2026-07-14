@@ -369,17 +369,15 @@ function updateRule(idx, field, value){
 function renderRules(){
     var html = '';
     currentRules.forEach(function(r,i){
-        var sigLabel = (window._varLabels||{})[r.signal] || '';
         html += '<div class="rule-item">';
         html += '<span style="width:20px">#'+(i+1)+'</span>';
         html += '<div class="form-group" style="flex:1;min-width:200px"><label>信号参数</label>';
         html += '<select style="width:100%" onchange="updateRule('+i+',\'signal\',this.value);updateRule('+i+',\'label\',this.options[this.selectedIndex].dataset.label||\'\')">';
-        html += '<option value="">-- 选择变量 --</option>';
+        html += '<option value="">-- 选择信号 --</option>';
         for(var k in (window._varLabels||{})){
-            html += '<option value="'+k+'" data-label="'+window._varLabels[k]+'" '+(k===r.signal?'selected':'')+'>'+k+' — '+window._varLabels[k]+'</option>';
+            html += '<option value="'+k+'" data-label="'+window._varLabels[k]+'" '+(k===r.signal?'selected':'')+'>'+window._varLabels[k]+'</option>';
         }
         html += '</select>';
-        if(sigLabel) html += '<div style="font-size:10px;color:#1677ff">← '+sigLabel+'</div>';
         html += '</div>';
         html += '<div class="form-group" style="flex:0 0 110px"><label>角色</label><select onchange="updateRule('+i+',\'role\',this.value)">';
         html += '<option value="remote" '+(r.role==='remote'?'selected':'')+'>遥控信号</option>';
@@ -508,7 +506,8 @@ function renderResultConfigs(){
         items.forEach(function(c){
             var params = c.params || [];
             var paramHtml = params.map(function(p){
-                return '<span style="font-size:11px;color:#1f2937;background:#f0f5ff;padding:2px 8px;border-radius:4px;margin:2px">'+p.label+'='+p.value+(p.unit||'')+'</span>';
+                var dn = (window._varLabels||{})[p.param_name] || p.label || p.param_name;
+                return '<span style="font-size:11px;color:#1f2937;background:#f0f5ff;padding:2px 8px;border-radius:4px;margin:2px">'+dn+' '+p.value+'</span>';
             }).join('');
             html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8fafc;border-radius:8px;margin-bottom:4px">';
             html += '<strong style="font-size:12px;min-width:120px">'+c.name+'</strong>';
@@ -577,14 +576,12 @@ function renderResultParams(){
         var selOpts = '<option value="">-- 手动输入 --</option>';
         varOpts.forEach(function(v){
             var sel = (p.param_name === v.tag_name) ? ' selected' : '';
-            selOpts += '<option value="' + v.tag_name + '"' + sel + '>' + v.chinese_name + ' (' + v.tag_name + ') ' + (v.unit||'') + '</option>';
+            selOpts += '<option value="' + v.tag_name + '"' + sel + '>' + v.chinese_name + '</option>';
         });
         html += '<div class="rule-item">';
         html += '<span>#'+(i+1)+'</span>';
-        html += '<div class="form-group" style="flex:1.5;min-width:160px"><label>参数信号</label><select onchange="onResultParamSelect('+i+',this.value)">' + selOpts + '</select></div>';
-        html += '<div class="form-group" style="flex:0 0 130px"><label>参数名</label><input id="rpName'+i+'" value="'+(p.param_name||'')+'" onchange="window._rfCfg.params['+i+'].param_name=this.value"></div>';
-        html += '<div class="form-group" style="flex:1;min-width:100px"><label>显示名</label><input value="'+(p.label||'')+'" onchange="window._rfCfg.params['+i+'].label=this.value"></div>';
-        html += '<div class="form-group" style="flex:0 0 80px"><label>值</label><input type="number" step="0.01" value="'+p.value+'" onchange="window._rfCfg.params['+i+'].value=parseFloat(this.value)||0"></div>';
+        html += '<div class="form-group" style="flex:1.5;min-width:160px"><label>信号参数</label><select onchange="onResultParamSelect('+i+',this.value)">' + selOpts + '</select></div>';
+        html += '<div class="form-group" style="flex:0 0 80px"><label>阈值</label><input type="number" step="0.01" value="'+p.value+'" onchange="window._rfCfg.params['+i+'].value=parseFloat(this.value)||0"></div>';
         html += '<div class="form-group" style="flex:0 0 60px"><label>单位</label><input value="'+(p.unit||'')+'" onchange="window._rfCfg.params['+i+'].unit=this.value"></div>';
         html += '<button class="btn-ghost" style="color:#dc2626;margin-top:16px" onclick="removeResultParam('+i+')">x</button>';
         html += '</div>';
