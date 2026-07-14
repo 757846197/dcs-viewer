@@ -1494,7 +1494,7 @@ def _evaluate_rule_groups(rule_groups, signal_stats, cycle_type):
                 continue
             op = rule.get("operator", "gt")
             thr = rule.get("threshold_value", 0)
-            val = _extract_signal_value(sm, op)
+            val = sm.get("max", 0)
             met = False
             if op in ("gt",): met = val > thr
             elif op in ("lt",): met = val < thr

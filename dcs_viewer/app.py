@@ -2151,14 +2151,29 @@ if __name__ == "__main__":
     for w in warnings:
         print(w)
 
+    # 端口冲突检测: DEV 模式下若配置端口被占用, 自动换一个
+    _actual_port = FLASK_PORT
+    if not getattr(sys, 'frozen', False):
+        import socket as _socket
+        for _offset in range(10):
+            _test = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            _test.settimeout(0.5)
+            _free = _test.connect_ex((FLASK_HOST, _actual_port)) != 0
+            _test.close()
+            if _free:
+                break
+            _actual_port = FLASK_PORT + _offset + 1
+        if _actual_port != FLASK_PORT:
+            print(f"  [INFO] 端口 {FLASK_PORT} 已被占用 (可能是EXE), 自动切换为 {_actual_port}")
+
     print(f"\n  DCS 数据分析平台已启动")
-    print(f"  浏览器打开: http://localhost:{FLASK_PORT}")
-    print(f"  实时监控:   http://localhost:{FLASK_PORT}/realtime")
+    print(f"  浏览器打开: http://localhost:{_actual_port}")
+    print(f"  实时监控:   http://localhost:{_actual_port}/realtime")
     print(f"  [DEBUG] SETTINGS_PASSWORD={repr(SETTINGS_PASSWORD)} APP_TOKEN={repr(APP_TOKEN)}")
-    print(f"  趋势分析:   http://localhost:{FLASK_PORT}/trend")
-    print(f"  作业分析:   http://localhost:{FLASK_PORT}/analysis")
-    print(f"  循环标注:   http://localhost:{FLASK_PORT}/labeling")
-    print(f"  检测规则:   http://localhost:{FLASK_PORT}/detect-config")
+    print(f"  趋势分析:   http://localhost:{_actual_port}/trend")
+    print(f"  作业分析:   http://localhost:{_actual_port}/analysis")
+    print(f"  循环标注:   http://localhost:{_actual_port}/labeling")
+    print(f"  检测规则:   http://localhost:{_actual_port}/detect-config")
     print(f"  API 认证:   {'已启用 (APP_TOKEN)' if APP_TOKEN else '[WARN] 未启用 (仅内网安全)'}")
     print()
 
@@ -2172,16 +2187,17 @@ if __name__ == "__main__":
 
     # 自动打开浏览器
     if not getattr(sys, 'frozen', False):
-        webbrowser.open(f"http://localhost:{FLASK_PORT}")
+        webbrowser.open(f"http://localhost:{_actual_port}")
     else:
         # PyInstaller 环境，等待 Flask 完全启动后再打开
         def _open_browser():
-            _time.sleep(3.0)   # waitress 在 PyInstaller 中启动较慢
+            _time.sleep(3.0)
+            webbrowser.open(f"http://localhost:{FLASK_PORT}")
             webbrowser.open(f"http://localhost:{FLASK_PORT}")
         threading.Thread(target=_open_browser, daemon=True).start()
     try:
         from waitress import serve
-        serve(app, host=FLASK_HOST, port=FLASK_PORT, threads=8)
+        serve(app, host=FLASK_HOST, port=_actual_port, threads=8)
     except ImportError:
         print("  提示: 未安装 waitress，使用 Flask 内置开发服务器")
-        app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False, threaded=True)
+        app.run(host=FLASK_HOST, port=_actual_port, debug=False, threaded=True)
