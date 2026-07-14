@@ -679,7 +679,9 @@ def api_cycles():
         range_days = 0
     
     if range_days <= 1.5 and cycles:
-        _enrich_cycles_with_metrics(cycles, start, end)
+        try: dc_id = int(config_id) if config_id else 0
+        except: dc_id = 0
+        _enrich_cycles_with_metrics(cycles, start, end, detect_config_id=dc_id)
     
     # ── 去重并存入数据库 ──
     saved_count = 0
@@ -709,7 +711,7 @@ def api_cycles():
     })
 
 
-def _enrich_cycles_with_metrics(cycles, time_start, time_end):
+def _enrich_cycles_with_metrics(cycles, time_start, time_end, detect_config_id=0):
     """批量提取所有周期的判定指标（一次 InfluxDB 查询 + 逐个窗口评估）"""
     if not cycles:
         return
@@ -751,7 +753,7 @@ def _enrich_cycles_with_metrics(cycles, time_start, time_end):
             except Exception:
                 continue
             
-            metrics = _extract_cycle_metrics(data, st, et, is_plugging, equip_id)
+            metrics = _extract_cycle_metrics(data, st, et, is_plugging, equip_id, detect_config_id)
             c["result"] = metrics.get("result", "unknown")
             c["breakthrough"] = metrics.get("breakthrough", False)
             c["metrics"] = metrics  # 完整指标供前端使用
@@ -1230,7 +1232,8 @@ def _pick_value_for_param(param_name, param, sm):
 
 
 def _extract_cycle_metrics(
-    data: dict, start_time, end_time, is_plugging: bool, equipment_id: str
+    data: dict, start_time, end_time, is_plugging: bool, equipment_id: str,
+    detect_config_id: int = 0
 ) -> dict:
     """从配置驱动的判定规则提取周期指标和判定结果。
     
@@ -1294,8 +1297,15 @@ def _extract_cycle_metrics(
                     breakthrough = True
         metrics["breakthrough"] = breakthrough
     
-    # 3. 从配置表加载判定规则并评估（优先级排序）
-    judge_configs = _load_judge_configs(cycle_type)
+    # 3. 从配置表加载判定规则并评估（按检测规则绑定 + 优先级排序）
+    judge_configs = _load_judge_configs(cycle_type, detect_config_id)
+    triggered_alerts = []  # 命中的告警规则
+    
+    # 也加载 rule_groups 告警规则并评估
+    rule_groups = _load_rule_groups(cycle_type, detect_config_id)
+    if rule_groups:
+        triggered_alerts = _evaluate_rule_groups(rule_groups, signal_stats, cycle_type)
+        metrics["triggered_alerts"] = triggered_alerts
     if judge_configs:
         verdicts = {}
         # 按 category 分组，组内按 priority DESC 排序
@@ -1417,13 +1427,81 @@ def _get_relevant_signals(cycle_type, equipment_id):
                 "LT_LQFC_134", "LT_LQFC_135", "LT_LQFC_136"]
 
 
-def _load_judge_configs(cycle_type):
-    """从数据库加载判定规则配置（带缓存，仅本请求内有效）"""
+def _load_judge_configs(cycle_type, detect_config_id=0):
+    """从数据库加载判定规则配置（按检测规则绑定过滤）"""
     try:
         configs = get_result_judge_configs(cycle_type=cycle_type)
-        return [c for c in configs if c.get("enabled")]
+        result = [c for c in configs if c.get("enabled")]
+        if detect_config_id:
+            result = [c for c in result if c.get("detect_config_id") == detect_config_id]
+        return result
     except Exception:
         return []
+
+
+def _load_rule_groups(cycle_type, detect_config_id=0):
+    """从数据库加载告警/评分规则组（按检测规则绑定过滤, 含子规则）"""
+    try:
+        from dcs_platform.core.db import _get_conn
+        q = "SELECT * FROM rule_groups WHERE enabled=1 AND cycle_type=?"
+        args = [cycle_type]
+        if detect_config_id:
+            q += " AND detect_config_id=?"
+            args.append(detect_config_id)
+        q += " ORDER BY priority DESC"
+        rows = _get_conn().execute(q, tuple(args)).fetchall()
+        groups = []
+        for r in rows:
+            g = dict(r)
+            g["rules"] = [dict(r2) for r2 in _get_conn().execute(
+                "SELECT * FROM rules WHERE group_id=? AND enabled=1 ORDER BY priority DESC",
+                (r["id"],)
+            ).fetchall()]
+            groups.append(g)
+        return groups
+    except Exception:
+        return []
+
+
+def _evaluate_rule_groups(rule_groups, signal_stats, cycle_type):
+    """评估 rule_groups 规则，返回命中的告警列表"""
+    triggered = []
+    for grp in rule_groups:
+        logic_op = grp.get("logic_op", "AND")
+        rules = grp.get("rules", [])
+        if not rules:
+            continue
+        results = []
+        for rule in rules:
+            param = rule.get("param_name", "")
+            if not param or param.startswith("_prev."):
+                results.append(True)  # 历史引用参数跳过
+                continue
+            sm = signal_stats.get(param)
+            if sm is None:
+                results.append(False)
+                continue
+            op = rule.get("operator", "gt")
+            thr = rule.get("threshold_value", 0)
+            val = _extract_signal_value(sm, op)
+            met = False
+            if op in ("gt",): met = val > thr
+            elif op in ("lt",): met = val < thr
+            elif op in ("gte",): met = val >= thr
+            elif op in ("lte",): met = val <= thr
+            elif op in ("eq",): met = val == thr
+            elif op in ("between",):
+                thr2 = rule.get("threshold_value2", 0)
+                met = thr <= val <= thr2
+            results.append(met)
+        match = all(results) if logic_op == "AND" else any(results)
+        if match:
+            triggered.append({
+                "group_name": grp.get("name", ""),
+                "group_id": grp.get("id"),
+                "priority": grp.get("priority", 0),
+            })
+    return triggered
 
 
 # === Endpoint 1: Multi-machine state timeline ===

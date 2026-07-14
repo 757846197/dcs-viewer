@@ -112,6 +112,7 @@ def init_db():
             name TEXT NOT NULL,
             description TEXT DEFAULT '',
             logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
+            detect_config_id INTEGER DEFAULT 0,    -- 绑定的检测规则 ID
             priority INTEGER DEFAULT 0,
             enabled INTEGER DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now')),
@@ -182,11 +183,11 @@ def init_db():
             cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
             category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth','fallback')),
             description TEXT DEFAULT '',            -- 规则描述
-            params_json TEXT NOT NULL DEFAULT '[]', -- 条件参数列表 [{param_name, value/threshold, operator, unit, label}]
-                                                     --   is_static=1 时可为空数组 → 无条件触发
+            params_json TEXT NOT NULL DEFAULT '[]', -- 条件参数列表
             logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
-            priority INTEGER DEFAULT 0,             -- 优先级: 数值越大越优先, 同category内按priority排序后首条匹配胜出
-            is_static INTEGER DEFAULT 0 CHECK(is_static IN (0,1)), -- 1=无变量静态规则(条件永真)
+            detect_config_id INTEGER DEFAULT 0,    -- 绑定的检测规则 ID (detect_configs.id), 0=未绑定
+            priority INTEGER DEFAULT 0,             -- 优先级
+            is_static INTEGER DEFAULT 0 CHECK(is_static IN (0,1)), -- 1=无变量静态规则
             enabled INTEGER DEFAULT 1,
             is_default INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
@@ -984,10 +985,22 @@ def _migrate_result_judge_configs():
 		conn.commit()
 	else:
 		# 仅添加缺失列
-		for col, defval in [("priority", 0), ("is_static", 0)]:
+		for col, defval in [("priority", 0), ("is_static", 0), ("detect_config_id", 0)]:
 			if col not in cols:
 				conn.execute(f"ALTER TABLE result_judge_configs ADD COLUMN {col} INTEGER DEFAULT {defval}")
 		conn.commit()
+
+def _migrate_rule_groups():
+	"""迁移 rule_groups 表: 添加 detect_config_id"""
+	conn = _get_conn()
+	try:
+		cols = [r[1] for r in conn.execute("PRAGMA table_info(rule_groups)").fetchall()]
+	except Exception:
+		return
+	if "detect_config_id" not in cols:
+		conn.execute("ALTER TABLE rule_groups ADD COLUMN detect_config_id INTEGER DEFAULT 0")
+		conn.commit()
+		logger.info("_migrate_rule_groups: added detect_config_id")
 
 # ===================================================================
 #  编码器校准 CRUD
@@ -1206,5 +1219,6 @@ def seed_variable_configs():
 
 init_db()
 _migrate_result_judge_configs()
+_migrate_rule_groups()
 seed_default_result_configs()
 seed_variable_configs()
