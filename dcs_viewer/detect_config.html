@@ -223,6 +223,18 @@ function showAlert(msg,cls){var el=document.getElementById('alertBox');el.textCo
 function _api(url, opts){if(!opts)opts={};url+=(url.includes('?')?'&':'?')+'token='+APP_TOKEN;return fetch(url,opts).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})}
 
 // 加载列表
+function loadVariableLabels(){
+    fetch('/api/analysis/variable-configs?mode=options&token='+APP_TOKEN)
+        .then(function(r){return r.json()})
+        .then(function(d){
+            window._varLabels = {};
+            (d.options||[]).forEach(function(o){
+                window._varLabels[o.tag_name] = o.chinese_name;
+            });
+        })
+        .catch(function(){ window._varLabels = {}; });
+}
+
 function loadConfigs(){
     _api('/api/analysis/detect-configs').then(function(d){
         configs = d.configs || [];
@@ -357,9 +369,18 @@ function updateRule(idx, field, value){
 function renderRules(){
     var html = '';
     currentRules.forEach(function(r,i){
+        var sigLabel = (window._varLabels||{})[r.signal] || '';
         html += '<div class="rule-item">';
         html += '<span style="width:20px">#'+(i+1)+'</span>';
-        html += '<div class="form-group" style="flex:1;min-width:130px"><label>信号参数</label><input value="'+r.signal+'" placeholder="LT_LQFC_57" onchange="updateRule('+i+',\'signal\',this.value)"></div>';
+        html += '<div class="form-group" style="flex:1;min-width:200px"><label>信号参数</label>';
+        html += '<select style="width:100%" onchange="updateRule('+i+',\'signal\',this.value);updateRule('+i+',\'label\',this.options[this.selectedIndex].dataset.label||\'\')">';
+        html += '<option value="">-- 选择变量 --</option>';
+        for(var k in (window._varLabels||{})){
+            html += '<option value="'+k+'" data-label="'+window._varLabels[k]+'" '+(k===r.signal?'selected':'')+'>'+k+' — '+window._varLabels[k]+'</option>';
+        }
+        html += '</select>';
+        if(sigLabel) html += '<div style="font-size:10px;color:#1677ff">← '+sigLabel+'</div>';
+        html += '</div>';
         html += '<div class="form-group" style="flex:0 0 110px"><label>角色</label><select onchange="updateRule('+i+',\'role\',this.value)">';
         html += '<option value="remote" '+(r.role==='remote'?'selected':'')+'>遥控信号</option>';
         html += '<option value="crossing" '+(r.role==='crossing'?'selected':'')+'>穿越阈值</option>';
@@ -388,6 +409,7 @@ function renderRules(){
 loadConfigs();
 loadTuningStatus();
 loadTuningHistory();
+loadVariableLabels();
 
 // ========== 自整定 ==========
 var tuningRunning = false;
