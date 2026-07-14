@@ -178,12 +178,15 @@ def init_db():
         -- 判定规则配置（结果分类: 成功/失败/未完成/未完整/钻透/铁口深度）
         CREATE TABLE IF NOT EXISTS result_judge_configs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,                    -- 配置名称
+            name TEXT NOT NULL,                    -- 规则名称（中文）
             cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
-            category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth')),
-            description TEXT DEFAULT '',            -- 判定条件描述
-            params_json TEXT NOT NULL,              -- [{param_name, value, unit, data_type, range_min, range_max}]
+            category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth','fallback')),
+            description TEXT DEFAULT '',            -- 规则描述
+            params_json TEXT NOT NULL DEFAULT '[]', -- 条件参数列表 [{param_name, value/threshold, operator, unit, label}]
+                                                     --   is_static=1 时可为空数组 → 无条件触发
             logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
+            priority INTEGER DEFAULT 0,             -- 优先级: 数值越大越优先, 同category内按priority排序后首条匹配胜出
+            is_static INTEGER DEFAULT 0 CHECK(is_static IN (0,1)), -- 1=无变量静态规则(条件永真)
             enabled INTEGER DEFAULT 1,
             is_default INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
@@ -701,26 +704,26 @@ def delete_detect_config(config_id):
 
 _DEFAULT_RESULT_PARAMS = {
     # === 开口作业判定规则 ===
-    # 信号源: 东开口机 LT_LQFC_57~89, 西开口机 LT_LQFC_94~125
-    # 核心信号: 67=推进位置(行程), 68=推进压力, 69=冲击指令, 63=回转位置
+    # 优先级: success(10) > fail(5) > incomplete(3) > breakthrough(8) > depth(8) > fallback(0)
+    # is_static=1 表示无变量静态规则, 始终触发
     "opening": {
-        "success": {"name": "开口成功判定", "logic": "AND", "params": [
+        "success": {"name": "开口成功判定", "logic": "AND", "priority": 10, "params": [
             {"param_name": "LT_LQFC_67", "value": 0.5, "unit": "m", "data_type": "float",
              "range_min": 0.1, "range_max": 2.0, "label": "推进位置位移量 (max-min)", "operator": "gte"},
             {"param_name": "LT_LQFC_68", "value": 0.15, "unit": "ratio", "data_type": "float",
              "range_min": 0.05, "range_max": 0.5, "label": "推进压力骤降比 (晚期/早期)", "operator": "lt"},
         ]},
-        "fail": {"name": "开口失败判定", "logic": "AND", "params": [
+        "fail": {"name": "开口失败判定", "logic": "AND", "priority": 5, "params": [
             {"param_name": "LT_LQFC_67", "value": 0.1, "unit": "m", "data_type": "float",
              "range_min": 0.01, "range_max": 0.3, "label": "推进位置位移上限 (无有效钻进)", "operator": "lt"},
         ]},
-        "incomplete": {"name": "开口未完成判定", "logic": "AND", "params": [
+        "incomplete": {"name": "开口未完成判定", "logic": "AND", "priority": 3, "params": [
             {"param_name": "LT_LQFC_67", "value": 0.1, "unit": "m", "data_type": "float",
              "range_min": 0.05, "range_max": 1.0, "label": "推进位置位移下限 (有钻进)", "operator": "gte"},
             {"param_name": "LT_LQFC_68", "value": 0.15, "unit": "ratio", "data_type": "float",
              "range_min": 0.05, "range_max": 0.5, "label": "推进压力骤降比 (未达标,未钻透)", "operator": "gte"},
         ]},
-        "breakthrough": {"name": "钻透判定", "logic": "AND", "params": [
+        "breakthrough": {"name": "钻透判定", "logic": "AND", "priority": 8, "params": [
             {"param_name": "LT_LQFC_67", "value": 0.6, "unit": "ratio", "data_type": "float",
              "range_min": 0.3, "range_max": 0.95, "label": "推进行程占比 (实际/全量程)", "operator": "gte"},
             {"param_name": "LT_LQFC_68", "value": 0.2, "unit": "ratio", "data_type": "float",
@@ -728,7 +731,7 @@ _DEFAULT_RESULT_PARAMS = {
             {"param_name": "LT_LQFC_69", "value": 1, "unit": "bool", "data_type": "int",
              "range_min": 0, "range_max": 1, "label": "冲击指令已激活", "operator": "eq"},
         ]},
-        "depth": {"name": "铁口深度计算", "logic": "AND", "params": [
+        "depth": {"name": "铁口深度计算", "logic": "AND", "priority": 8, "params": [
             {"param_name": "LT_LQFC_67", "value": 1.0, "unit": "m", "data_type": "float",
              "range_min": 0.5, "range_max": 3.0, "label": "推进有效行程下限 (max-基线)", "operator": "gte"},
             {"param_name": "LT_LQFC_63", "value": 30, "unit": "deg", "data_type": "float",
@@ -736,39 +739,42 @@ _DEFAULT_RESULT_PARAMS = {
             {"param_name": "encoder_offset_calib", "value": 1, "unit": "bool", "data_type": "int",
              "range_min": 0, "range_max": 1, "label": "编码器偏移自动校正", "operator": "eq"},
         ]},
+        # 静态兜底规则: 无变量, 始终触发 (优先级最低)
+        "fallback": {"name": "开口兜底规则 (无匹配时默认)", "logic": "AND", "priority": 0,
+                     "is_static": 1, "params": []},
     },
     # === 堵口作业判定规则 ===
-    # 信号源: 东堵口机 LT_LQFC_129~151,179, 西堵口机 LT_LQFC_152~167,180
-    # 核心信号: 179/180=打泥量, 138/161=打泥压力, 137/160=打泥位置(行程), 134/157=打泥指令
     "plugging": {
-        "success": {"name": "堵口成功判定", "logic": "AND", "params": [
+        "success": {"name": "堵口成功判定", "logic": "AND", "priority": 10, "params": [
             {"param_name": "LT_LQFC_179", "value": 100, "unit": "L", "data_type": "float",
              "range_min": 50, "range_max": 500, "label": "打泥总量 (max-min)", "operator": "gte"},
             {"param_name": "LT_LQFC_134", "value": 60, "unit": "s", "data_type": "int",
              "range_min": 30, "range_max": 300, "label": "保压时长下限", "operator": "gte"},
         ]},
-        "fail": {"name": "堵口失败判定", "logic": "AND", "params": [
+        "fail": {"name": "堵口失败判定", "logic": "AND", "priority": 5, "params": [
             {"param_name": "LT_LQFC_179", "value": 50, "unit": "L", "data_type": "float",
              "range_min": 10, "range_max": 200, "label": "打泥量下限 (严重不足)", "operator": "lt"},
         ]},
-        "unfinished": {"name": "堵口未完整判定", "logic": "AND", "params": [
+        "unfinished": {"name": "堵口未完整判定", "logic": "AND", "priority": 3, "params": [
             {"param_name": "LT_LQFC_179", "value": 50, "unit": "L", "data_type": "float",
              "range_min": 10, "range_max": 200, "label": "打泥量下限 (部分完成)", "operator": "gte"},
             {"param_name": "LT_LQFC_134", "value": 60, "unit": "s", "data_type": "int",
              "range_min": 10, "range_max": 300, "label": "保压时长上限 (不足)", "operator": "lt"},
         ]},
-        "breakthrough": {"name": "钻透判定 (泥炮到位)", "logic": "AND", "params": [
+        "breakthrough": {"name": "钻透判定 (泥炮到位)", "logic": "AND", "priority": 8, "params": [
             {"param_name": "LT_LQFC_137", "value": 0.8, "unit": "ratio", "data_type": "float",
              "range_min": 0.5, "range_max": 1.0, "label": "打泥位置到位比 (行程/工作位)", "operator": "gte"},
             {"param_name": "LT_LQFC_138", "value": 15.0, "unit": "MPa", "data_type": "float",
              "range_min": 5.0, "range_max": 30.0, "label": "打泥压力峰值", "operator": "gte"},
         ]},
-        "depth": {"name": "铁口深度计算 (堵口)", "logic": "AND", "params": [
+        "depth": {"name": "铁口深度计算 (堵口)", "logic": "AND", "priority": 8, "params": [
             {"param_name": "LT_LQFC_137", "value": 100, "unit": "mm", "data_type": "float",
              "range_min": 50, "range_max": 500, "label": "打泥行程下限 (max-基线)", "operator": "gte"},
             {"param_name": "LT_LQFC_138", "value": 10.0, "unit": "MPa", "data_type": "float",
              "range_min": 5.0, "range_max": 25.0, "label": "打泥平均压力下限", "operator": "gte"},
         ]},
+        "fallback": {"name": "堵口兜底规则 (无匹配时默认)", "logic": "AND", "priority": 0,
+                     "is_static": 1, "params": []},
     }
 }
 
@@ -779,14 +785,16 @@ def get_result_judge_configs(cycle_type=None, category=None):
         q += " AND cycle_type=?"; args.append(cycle_type)
     if category:
         q += " AND category=?"; args.append(category)
-    q += " ORDER BY cycle_type, category"
+    q += " ORDER BY cycle_type, priority DESC, category"
     rows = _get_conn().execute(q, args).fetchall()
     result = []
     for r in rows:
         d = dict(r)
-        try: d["params"] = json.loads(d["params_json"])
+        try: d["params"] = json.loads(d.get("params_json","[]"))
         except: d["params"] = []
-        del d["params_json"]
+        # 删除 db 专用字段避免传递到前端
+        for k in ["params_json"]:
+            if k in d: del d[k]
         result.append(d)
     return result
 
@@ -794,9 +802,10 @@ def get_result_judge_config(config_id):
     r = _get_conn().execute("SELECT * FROM result_judge_configs WHERE id=?", (config_id,)).fetchone()
     if not r: return None
     d = dict(r)
-    try: d["params"] = json.loads(d["params_json"])
+    try: d["params"] = json.loads(d.get("params_json","[]"))
     except: d["params"] = []
-    del d["params_json"]
+    for k in ["params_json"]:
+        if k in d: del d[k]
     return d
 
 def get_default_result_config(cycle_type, category):
@@ -814,23 +823,25 @@ def get_default_result_config(cycle_type, category):
     if defaults:
         config_id = upsert_result_judge_config(
             None, defaults["name"], cycle_type, category,
-            json.dumps(defaults["params"], ensure_ascii=False),
-            defaults.get("logic", "AND"), is_default=1
+            json.dumps(defaults.get("params",[]), ensure_ascii=False),
+            defaults.get("logic", "AND"), is_default=1,
+            priority=defaults.get("priority", 0),
+            is_static=defaults.get("is_static", 0)
         )
         return get_result_judge_config(config_id)
     return None
 
-def upsert_result_judge_config(config_id, name, cycle_type, category, params_json, logic_op="AND", is_default=0, description=""):
+def upsert_result_judge_config(config_id, name, cycle_type, category, params_json, logic_op="AND", is_default=0, description="", priority=0, is_static=0):
     conn = _get_conn()
     if config_id:
         conn.execute(
-            "UPDATE result_judge_configs SET name=?,params_json=?,logic_op=?,is_default=?,description=?,updated_at=datetime('now') WHERE id=?",
-            (name, params_json, logic_op, is_default, description, config_id))
+            "UPDATE result_judge_configs SET name=?,params_json=?,logic_op=?,is_default=?,description=?,priority=?,is_static=?,updated_at=datetime('now') WHERE id=?",
+            (name, params_json, logic_op, is_default, description, priority, is_static, config_id))
         conn.commit()
         return config_id
     c = conn.execute(
-        "INSERT INTO result_judge_configs(name,cycle_type,category,params_json,logic_op,is_default,description) VALUES(?,?,?,?,?,?,?)",
-        (name, cycle_type, category, params_json, logic_op, is_default, description))
+        "INSERT INTO result_judge_configs(name,cycle_type,category,params_json,logic_op,is_default,description,priority,is_static) VALUES(?,?,?,?,?,?,?,?,?)",
+        (name, cycle_type, category, params_json, logic_op, is_default, description, priority, is_static))
     conn.commit()
     return c.lastrowid
 
@@ -928,42 +939,55 @@ def get_tuning_history(config_id=None, limit=50):
     return [dict(r) for r in _get_conn().execute(q, args).fetchall()]
 
 def _migrate_result_judge_configs():
-    """迁移 result_judge_configs 表: 添加 breakthrough/depth 分类"""
-    conn = _get_conn()
-    # 检查是否已有新分类
-    try:
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(result_judge_configs)").fetchall()]
-    except Exception:
-        return  # 表不存在, CREATE TABLE IF NOT EXISTS 会处理
-    if 'category' not in cols:
-        return
-    
-    # 检查现有约束
-    info = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='result_judge_configs'").fetchone()
-    if not info:
-        return
-    sql_def = info[0]
-    if 'breakthrough' in sql_def and 'depth' in sql_def:
-        return  # 已迁移
-    
-    # 执行迁移: 备份旧表 → 创建新表 → 恢复数据
-    conn.execute("ALTER TABLE result_judge_configs RENAME TO result_judge_configs_old")
-    conn.execute("""CREATE TABLE result_judge_configs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
-        category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth')),
-        description TEXT DEFAULT '',
-        params_json TEXT NOT NULL,
-        logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
-        enabled INTEGER DEFAULT 1,
-        is_default INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
-    )""")
-    conn.execute("INSERT INTO result_judge_configs SELECT * FROM result_judge_configs_old")
-    conn.execute("DROP TABLE result_judge_configs_old")
-    conn.commit()
+	"""迁移 result_judge_configs 表: 添加 priority/is_static 字段 + fallback 分类"""
+	conn = _get_conn()
+	try:
+		cols = [r[1] for r in conn.execute("PRAGMA table_info(result_judge_configs)").fetchall()]
+	except Exception:
+		return
+	if 'category' not in cols:
+		return
+	
+	need_recreate = False
+	info = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='result_judge_configs'").fetchone()
+	if info:
+		sql_def = info[0]
+		if 'fallback' not in sql_def or 'priority' not in sql_def or 'is_static' not in sql_def:
+			need_recreate = True
+	
+	if need_recreate:
+		logger.info("结果判定规则表迁移: 添加 priority/is_static + fallback 分类")
+		conn.execute("ALTER TABLE result_judge_configs RENAME TO result_judge_configs_old")
+		conn.execute("""CREATE TABLE result_judge_configs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			cycle_type TEXT NOT NULL CHECK(cycle_type IN ('opening','plugging')),
+			category TEXT NOT NULL CHECK(category IN ('success','fail','incomplete','unfinished','breakthrough','depth','fallback')),
+			description TEXT DEFAULT '',
+			params_json TEXT NOT NULL DEFAULT '[]',
+			logic_op TEXT DEFAULT 'AND' CHECK(logic_op IN ('AND','OR')),
+			priority INTEGER DEFAULT 0,
+			is_static INTEGER DEFAULT 0 CHECK(is_static IN (0,1)),
+			enabled INTEGER DEFAULT 1,
+			is_default INTEGER DEFAULT 0,
+			created_at TEXT DEFAULT (datetime('now')),
+			updated_at TEXT DEFAULT (datetime('now'))
+		)""")
+		# 复制旧数据, 新列用默认值
+		conn.execute("""INSERT INTO result_judge_configs(id,name,cycle_type,category,description,params_json,logic_op,enabled,is_default,created_at,updated_at)
+			SELECT id,name,cycle_type,category,description,COALESCE(params_json,'[]'),logic_op,enabled,is_default,created_at,updated_at
+			FROM result_judge_configs_old""")
+		# 设置已有 success 规则为最高优先级, 其余默认0
+		conn.execute("UPDATE result_judge_configs SET priority=10 WHERE category='success'")
+		conn.execute("UPDATE result_judge_configs SET priority=5 WHERE category='fail'")
+		conn.execute("DROP TABLE result_judge_configs_old")
+		conn.commit()
+	else:
+		# 仅添加缺失列
+		for col, defval in [("priority", 0), ("is_static", 0)]:
+			if col not in cols:
+				conn.execute(f"ALTER TABLE result_judge_configs ADD COLUMN {col} INTEGER DEFAULT {defval}")
+		conn.commit()
 
 # ===================================================================
 #  编码器校准 CRUD

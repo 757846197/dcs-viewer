@@ -238,7 +238,9 @@ def api_create_result_config():
         json.dumps(data.get("params", []), ensure_ascii=False),
         data.get("logic_op", "AND"),
         data.get("is_default", 0),
-        data.get("description", "")
+        data.get("description", ""),
+        data.get("priority", 0),
+        data.get("is_static", 0)
     )
     return jsonify({"ok": True, "id": config_id})
 
@@ -256,7 +258,9 @@ def api_update_result_config(config_id):
         json.dumps(data.get("params", existing["params"]), ensure_ascii=False),
         data.get("logic_op", existing.get("logic_op", "AND")),
         data.get("is_default", existing.get("is_default", 0)),
-        data.get("description", existing.get("description", ""))
+        data.get("description", existing.get("description", "")),
+        data.get("priority", existing.get("priority", 0)),
+        data.get("is_static", existing.get("is_static", 0))
     )
     return jsonify({"ok": True})
 
@@ -1290,34 +1294,55 @@ def _extract_cycle_metrics(
                     breakthrough = True
         metrics["breakthrough"] = breakthrough
     
-    # 3. 从配置表加载判定规则并评估
+    # 3. 从配置表加载判定规则并评估（优先级排序）
     judge_configs = _load_judge_configs(cycle_type)
     if judge_configs:
         verdicts = {}
+        # 按 category 分组，组内按 priority DESC 排序
+        by_cat = {}
         for cfg in judge_configs:
-            category = cfg.get("category", "")
-            logic_op = cfg.get("logic_op", "AND")
-            params = cfg.get("params", [])
-            if not params:
-                continue
-            results = []
-            for p in params:
-                param_name = p.get("param_name", "")
-                if not param_name or "encoder_offset" in param_name or "calib" in param_name:
-                    results.append(True)  # 编码器校正参数: 视为满足
-                    continue
-                sm = signal_stats.get(param_name)
-                if sm is None:
-                    results.append(False)
-                    continue
-                results.append(_eval_param(p, sm))
-            
-            if logic_op == "AND":
-                verdicts[category] = all(results)
-            else:
-                verdicts[category] = any(results)
+            cat = cfg.get("category", "")
+            by_cat.setdefault(cat, []).append(cfg)
+        for cat in by_cat:
+            by_cat[cat].sort(key=lambda c: c.get("priority", 0), reverse=True)
         
-        # 4. 综合判定结果
+        for cat, cfgs in by_cat.items():
+            for cfg in cfgs:
+                logic_op = cfg.get("logic_op", "AND")
+                params = cfg.get("params", [])
+                is_static = cfg.get("is_static", 0)
+                
+                # is_static=1: 无变量, 永远匹配 (如兜底规则)
+                if is_static:
+                    if cat == "fallback":
+                        # fallback 类规则不直接设定结果, 而是让后续硬编码兜底处理
+                        pass
+                    else:
+                        verdicts[cat] = True
+                    break
+                
+                if not params:
+                    continue
+                
+                results = []
+                for p in params:
+                    param_name = p.get("param_name", "")
+                    if not param_name or "encoder_offset" in param_name or "calib" in param_name:
+                        results.append(True)
+                        continue
+                    sm = signal_stats.get(param_name)
+                    if sm is None:
+                        results.append(False)
+                        continue
+                    results.append(_eval_param(p, sm))
+                
+                match = all(results) if logic_op == "AND" else any(results)
+                if match:
+                    verdicts[cat] = True
+                    break  # 同 category 首条匹配即停止
+        
+        # 4. 综合判定结果 + 冲突解决策略:
+        #    优先级顺序: success > fail > incomplete/unfinished > hardcoded fallback
         metrics["judge_details"] = verdicts
         
         if is_plugging:
