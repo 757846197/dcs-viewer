@@ -210,6 +210,7 @@ tr:hover { background: #f8fafc; }
                 <select id="dMachine"><option value="all">全部设备</option><option value="东开口机">东开口机</option><option value="西开口机">西开口机</option><option value="东堵口机">东堵口机</option><option value="西堵口机">西堵口机</option></select>
             </div>
             <button class="btn btn-primary" onclick="runAnalysis()" id="btnAnalyze">开始分析</button>
+            <button class="btn btn-ghost" id="btnRefresh" onclick="refreshList()" disabled style="color:#1677ff;border-color:#91caff">刷新列表</button>
             <button class="btn btn-success" id="btnExport" onclick="exportResult()" disabled>导出 Excel</button>
             <button class="btn" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff" onclick="runModelAnalysis()" id="btnModel">智能分析</button>
             <span id="queryTimeRange" style="margin-left:auto;font-size:12px;color:#64748b;white-space:nowrap">--</span>
@@ -583,6 +584,7 @@ function runAnalysis(){
         // 预加载标签映射（供列表和详情使用）
         loadLabelMap().then(function() { renderCycles(); renderStats(); });
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
+        document.getElementById('btnRefresh').disabled = globalCycles.length === 0;
         document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
         document.getElementById('queryTimeRange').textContent = '查询: '+start.replace('T',' ')+' ~ '+end.replace('T',' ');
@@ -777,6 +779,18 @@ function renderStateTimeline(states){
         if(i<states.length-1 && states[i+1].machine===s.machine) html+='<span class="state-separator">→</span>';
     });
     content.innerHTML=html;
+}
+
+function refreshList(){
+    // 仅重新渲染 (不重新查询InfluxDB), 应用当前设备筛选
+    if(globalCycles.length===0){showAlert('没有数据可刷新，请点击「开始分析」', 'info');return;}
+    var machine = document.getElementById('dMachine').value;
+    var filtered = globalCycles;
+    if(machine!=='all'){
+        filtered = globalCycles.filter(function(c){return c.machine===machine;});
+    }
+    renderCycles(); renderStats();
+    showAlert('列表已刷新 (共 '+filtered.length+' 个周期, 无额外查询)', 'info');
 }
 
 function exportResult(){
