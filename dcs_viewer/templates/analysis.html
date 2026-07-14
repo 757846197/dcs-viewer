@@ -289,13 +289,47 @@ var chartInst = null;
 var PARAM_CONFIG = {{ groups_json | safe }};
 var _currentDimFilter = null;
 var _currentOpType = 'all';
+var _labelMap = {};   // tag_name → {chinese_name, unit, cycle_type, equipment}
+var _labelMapLoaded = false;
 
-function getLabelMap(){
+// 从 variable_configs API 加载标签映射（配置驱动）
+function loadLabelMap() {
+    if (_labelMapLoaded) return Promise.resolve(_labelMap);
+    return fetch('/api/analysis/variable-configs?token=' + APP_TOKEN)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            (d.configs || []).forEach(function(c) {
+                _labelMap[c.tag_name] = {name: c.chinese_name, unit: c.unit, type: c.cycle_type, equip: c.equipment};
+            });
+            _labelMapLoaded = true;
+            return _labelMap;
+        })
+        .catch(function() {
+            // 回退：旧的 PARAM_CONFIG labels
+            var labels = {};
+            (PARAM_CONFIG.groups || []).forEach(function(g) {
+                if (g.labels) Object.assign(labels, g.labels);
+            });
+            if (PARAM_CONFIG.labels) Object.assign(labels, PARAM_CONFIG.labels);
+            for (var k in labels) { _labelMap[k] = {name: labels[k], unit: '', type: '', equip: ''}; }
+            _labelMapLoaded = true;
+            return _labelMap;
+        });
+}
+
+function getLabel(tagName) {
+    var m = _labelMap[tagName];
+    return m ? m.name : tagName;
+}
+function getUnit(tagName) {
+    var m = _labelMap[tagName];
+    return m && m.unit ? m.unit : '';
+}
+
+// 旧版兼容
+function getLabelMap() {
     var labels = {};
-    (PARAM_CONFIG.groups || []).forEach(function(g){
-        if(g.labels) Object.assign(labels, g.labels);
-    });
-    if(PARAM_CONFIG.labels) Object.assign(labels, PARAM_CONFIG.labels);
+    for (var k in _labelMap) { labels[k] = _labelMap[k].name; }
     return labels;
 }
 
@@ -545,9 +579,8 @@ function runAnalysis(){
         if(machine!=='all'){
             globalCycles = globalCycles.filter(function(c){return c.machine===machine;});
         }
-        renderCycles();
-        loadStates();
-        renderStats();
+        // 预加载标签映射（供列表和详情使用）
+        loadLabelMap().then(function() { renderCycles(); renderStats(); });
         document.getElementById('btnExport').disabled = globalCycles.length === 0;
         document.getElementById('btnAnalyze').disabled = false;
         hideLoading();
@@ -600,14 +633,20 @@ function renderCycles(){
     document.getElementById('cycleTable').style.display = '';
 
     var html = '';
+    var hasMap = Object.keys(_labelMap).length > 0;
     filtered.forEach(function(c,i){
         var keyMetric = '';
+        var mt = c.metrics || {};
         if(c.type=='opening'){
-            keyMetric = '钻进'+(c.push_pos_change||0).toFixed(3)+'m | 推进峰'+(c.push_press_peak||0).toFixed(0)+'MPa';
-            if(c.breakthrough)keyMetric += ' | 已钻透';
+            var depthName = getLabel('LT_LQFC_67') || '推进位置';
+            var pressName = getLabel('LT_LQFC_68') || '推进压力';
+            keyMetric = depthName + ' ' + (c.push_pos_change||mt.push_depth||0).toFixed(3) + 'm | ' + pressName + '峰' + (c.push_press_peak||mt.push_press_max||0).toFixed(0) + 'MPa';
+            if(c.breakthrough) keyMetric += ' | 已钻透';
         }else{
-            keyMetric = '打泥量'+(c.mud_qty||0).toFixed(1)+' | 峰'+(c.mud_press_peak||0).toFixed(0)+'MPa';
-            if(c.hold_ok)keyMetric += ' | 保压OK';
+            var mudName = getLabel('LT_LQFC_179') || '打泥量';
+            var mudPressName = getLabel('LT_LQFC_138') || '打泥压力';
+            keyMetric = mudName + ' ' + (c.mud_qty||mt.mud_qty||0).toFixed(1) + ' | ' + mudPressName + '峰' + (c.mud_press_peak||mt.mud_press_peak||0).toFixed(0) + 'MPa';
+            if(c.hold_ok||mt.hold_ok) keyMetric += ' | 保压OK';
         }
         var winStart = formatTimeOnly(c.window_start);
         var winEnd = formatTimeOnly(c.window_end);
@@ -635,8 +674,11 @@ function showDetail(idx){
     document.getElementById('detailCard').scrollIntoView({behavior:'smooth'});
 
     showLoading('正在提取指标...');
-    var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
-    fetch(url).then(function(r){return r.json()}).then(function(metrics){
+    // 确保 labelMap 已加载再查指标
+    loadLabelMap().then(function() {
+        var url = '/api/analysis/metrics?window_start='+encodeURIComponent(c.window_start)+'&window_end='+encodeURIComponent(c.window_end)+'&machine='+encodeURIComponent(c.machine)+'&type='+c.type+'&token='+APP_TOKEN;
+        return fetch(url).then(function(r){return r.json()});
+    }).then(function(metrics){
         if(metrics.error){showAlert(metrics.error,'error');hideLoading();return;}
         renderMetrics(metrics);
         loadDetailChart(c, metrics);
@@ -647,33 +689,44 @@ function showDetail(idx){
 function renderMetrics(m){
     var html = '';
     if(m.type=='opening'){
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">开口深度</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">推进压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">转钎压力</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_67')||'推进位置')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_depth||0).toFixed(3)+'m</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_68')||'推进压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.push_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.push_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_87')||'转钎压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.drill_press_mean||0).toFixed(1)+'</div><div class="stat-detail">峰值 '+(m.drill_press_max||0).toFixed(1)+' MPa</div></div>';
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">钻透判定</div><div class="stat-value" style="font-size:22px">'+(m.breakthrough?'<span style="color:#059669">已钻透</span>':'<span style="color:#dc2626">未钻透</span>')+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">冲击状态</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_69')||'冲击状态')+'</div><div class="stat-value" style="font-size:22px">'+(m.impact_press_active?'<span style="color:#1677ff">已开启</span>':'<span style="color:#94a3b8">未开启</span>')+'</div></div>';
     }else{
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥量</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
-        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">打泥压力峰值</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_179')||'打泥量')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_qty||0).toFixed(1)+'</div></div>';
+        html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">'+(getLabel('LT_LQFC_138')||'打泥压力')+'</div><div class="stat-value" style="font-size:22px">'+(m.mud_press_max||0).toFixed(1)+'</div><div class="stat-detail">均值 '+(m.mud_press_mean||0).toFixed(1)+' MPa</div></div>';
         html += '<div class="stat-card" style="flex:1;min-width:140px"><div class="stat-label">保压时长</div><div class="stat-value" style="font-size:22px">'+(m.hold_duration_s||0)+'s</div><div class="stat-detail" style="color:'+(m.hold_ok?'#059669':'#dc2626')+'">'+(m.hold_ok?'保压合格 (≥60s)':'保压不足 (<60s)')+'</div></div>';
     }
     document.getElementById('detailMetrics').innerHTML = html;
 }
 
 function loadDetailChart(c, metrics){
-    var labels = getLabelMap();
     var wStart = c.window_start;
     var wEnd = c.window_end;
-    var sigs;
-    if(c.type=='opening'){
-        sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88','LT_LQFC_63'] :
-            ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125','LT_LQFC_100'];
-    }else{
-        sigs = c.machine.indexOf('东')>=0 ?
-            ['LT_LQFC_138','LT_LQFC_179','LT_LQFC_135'] :
-            ['LT_LQFC_161','LT_LQFC_180','LT_LQFC_158'];
+    // 从变量配置表获取当前设备 + 类型的信号列表
+    var isEast = c.machine.indexOf('东')>=0;
+    var equipId = (isEast?'east_':'west_') + (c.type=='opening'?'opener':'plugger');
+    var cycType = c.type=='opening'?'opening':'plugging';
+    var sigs = [];
+    for (var k in _labelMap) {
+        var m = _labelMap[k];
+        if (m.type === cycType && m.equip === equipId) sigs.push(k);
     }
+    // 不足5个时补核心信号兜底
+    if (sigs.length < 3) {
+        if (c.type=='opening') {
+            sigs = isEast ? ['LT_LQFC_67','LT_LQFC_68','LT_LQFC_87','LT_LQFC_88','LT_LQFC_63']
+                          : ['LT_LQFC_104','LT_LQFC_105','LT_LQFC_124','LT_LQFC_125','LT_LQFC_100'];
+        } else {
+            sigs = isEast ? ['LT_LQFC_138','LT_LQFC_179','LT_LQFC_135']
+                          : ['LT_LQFC_161','LT_LQFC_180','LT_LQFC_158'];
+        }
+    }
+    // 限制最多8条曲线
+    sigs = sigs.slice(0, 8);
+    var labels = getLabelMap();
     var url = '/api/trend?params='+sigs.join(',')+'&start='+encodeURIComponent(wStart.substring(0,16))+'&end='+encodeURIComponent(wEnd.substring(0,16));
     fetch(url+'&token='+APP_TOKEN).then(function(r){return r.json()}).then(function(data){
         if(data.error){return;}
